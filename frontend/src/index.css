@@ -1,77 +1,85 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
 @theme {
-  /* 定义灵镜的主题蓝 */
   --color-prism-blue: #3b82f6;
-  /* 定义自定义字体 */
-  --font-sans: "Inter", "Microsoft YaHei", sans-serif;
+  --font-sans: "Space Grotesk", "Noto Sans SC", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
 }
 
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   line-height: 1.5;
   font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
+  color: #0f172a;
+  background-color: #d6ecff;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
+  min-height: 100vh;
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(56, 189, 248, 0.25), transparent 45%),
+    radial-gradient(circle at 88% 16%, rgba(34, 197, 94, 0.18), transparent 40%),
+    linear-gradient(135deg, #cfe9ff 0%, #e7f4ff 45%, #f5fbff 100%);
+  background-attachment: fixed;
+}
+
+#root {
   min-height: 100vh;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
+button,
+input,
+textarea {
   font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+.composer-upload .ant-upload-list-picture-card-container,
+.composer-upload .ant-upload-select {
+  width: 72px;
+  height: 72px;
+}
+
+.composer-upload .ant-upload-list-picture-card .ant-upload-list-item {
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.composer-dropzone .ant-upload,
+.composer-dropzone .ant-upload-select {
+  border-radius: 16px;
+}
+
+.composer-dropzone .ant-upload-list-picture-card {
+  margin: 0;
+}
+
+.provider-menu .ant-menu-item {
+  height: auto;
+  line-height: 1.2;
+  padding: 10px 12px;
+  align-items: flex-start;
+}
+
+.provider-menu .ant-menu-title-content {
+  white-space: normal;
+}
+
+.provider-menu .ant-menu-item-icon {
+  align-self: flex-start;
+  margin-top: 2px;
 }

@@ -1,0 +1,18 @@
+.input-composer textarea {
+  resize: none;
+}
+
+.input-composer .ant-input {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.input-composer .ant-upload-list-picture-card .ant-upload-list-item {
+  background-color: #ffffff;
+}
+
+.input-composer .ant-upload-select {
+  background-color: rgba(248, 250, 252, 0.9);
+  border: 1px dashed rgba(148, 163, 184, 0.6);
+}
