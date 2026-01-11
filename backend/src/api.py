@@ -6,14 +6,17 @@ from typing import Any
 from services.generation import generate_batch, generate_single
 from storage import (
     CustomProvider,
+    ChatSession,
     Settings,
     add_custom_provider,
     delete_custom_provider,
     get_custom_provider,
     init_db,
+    list_chat_sessions,
     list_custom_providers,
     list_settings,
     save_settings,
+    upsert_chat_session,
 )
 
 
@@ -57,6 +60,16 @@ class ProApi:
             "model_ids": record.get_model_ids(),
             "is_enabled": record.get_is_enabled(),
             "updated_at": record.updated_at.isoformat(),
+        }
+
+    def _session_to_dict(self, record: ChatSession) -> dict[str, Any]:
+        return {
+            "id": record.session_id,
+            "modelId": record.model_id,
+            "title": record.title,
+            "messages": record.get_messages(),
+            "createdAt": record.created_at.isoformat(),
+            "updatedAt": record.updated_at.isoformat(),
         }
 
     def save_config(self, provider: str, key: str, url: str) -> dict[str, Any]:
@@ -108,6 +121,28 @@ class ProApi:
         if success:
             return {"ok": True, "message": f"Custom provider '{provider_name}' deleted"}
         return {"ok": False, "error": f"Custom provider '{provider_name}' not found"}
+
+    def get_chat_sessions(self, model_id: str) -> list[dict[str, Any]]:
+        model_id = (model_id or "").strip()
+        if not model_id:
+            return []
+        records = list_chat_sessions(model_id)
+        return [self._session_to_dict(record) for record in records]
+
+    def save_chat_session(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = (payload.get("id") or "").strip()
+        model_id = (payload.get("modelId") or "").strip()
+        title = (payload.get("title") or "").strip()
+        messages = payload.get("messages") or []
+
+        if not session_id or not model_id:
+            return {"ok": False, "error": "session id and modelId are required"}
+
+        if not isinstance(messages, list):
+            return {"ok": False, "error": "messages must be a list"}
+
+        record = upsert_chat_session(session_id, model_id, title, messages)
+        return {"ok": True, "session": self._session_to_dict(record)}
 
     def generate_image(self, payload: dict[str, Any]) -> dict[str, Any]:
         return generate_single(payload)

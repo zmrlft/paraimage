@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from peewee import CharField, DateTimeField, Model, SqliteDatabase
+from peewee import CharField, DateTimeField, Model, SqliteDatabase, TextField
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DB_PATH = DATA_DIR / "omniimage.db"
@@ -56,10 +56,28 @@ class CustomProvider(BaseModel):
         self.is_enabled = json.dumps(enabled)
 
 
+class ChatSession(BaseModel):
+    session_id = CharField(unique=True)
+    model_id = CharField()
+    title = CharField(default="")
+    messages = TextField(default="[]")
+    created_at = DateTimeField(default=datetime.utcnow)
+    updated_at = DateTimeField(default=datetime.utcnow)
+
+    def get_messages(self) -> list[dict]:
+        try:
+            return json.loads(self.messages) if self.messages else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def set_messages(self, messages: list[dict]) -> None:
+        self.messages = json.dumps(messages, ensure_ascii=False)
+
+
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     database.connect(reuse_if_open=True)
-    database.create_tables([Settings, CustomProvider], safe=True)
+    database.create_tables([Settings, CustomProvider, ChatSession], safe=True)
 
 
 def ensure_db() -> None:
@@ -158,3 +176,40 @@ def find_custom_provider_by_model(model_id: str) -> CustomProvider | None:
             ):
                 return provider
     return None
+
+
+def list_chat_sessions(model_id: str) -> list[ChatSession]:
+    ensure_db()
+    return list(
+        ChatSession.select()
+        .where(ChatSession.model_id == model_id)
+        .order_by(ChatSession.updated_at.desc())
+    )
+
+
+def upsert_chat_session(
+    session_id: str,
+    model_id: str,
+    title: str,
+    messages: list[dict],
+) -> ChatSession:
+    ensure_db()
+    now = datetime.utcnow()
+    existing = ChatSession.get_or_none(ChatSession.session_id == session_id)
+    if existing:
+        existing.model_id = model_id
+        existing.title = title
+        existing.set_messages(messages)
+        existing.updated_at = now
+        existing.save()
+        return existing
+    record = ChatSession(
+        session_id=session_id,
+        model_id=model_id,
+        title=title,
+        created_at=now,
+        updated_at=now,
+    )
+    record.set_messages(messages)
+    record.save()
+    return record

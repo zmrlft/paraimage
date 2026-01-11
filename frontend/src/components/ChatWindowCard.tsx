@@ -15,6 +15,7 @@ type ChatWindowCardProps = {
   onModelChange: (model: ModelValue) => void;
   messages: ChatMessage[];
   isGenerating: boolean;
+  onOpenHistory?: () => void;
 };
 
 export default function ChatWindowCard({
@@ -22,6 +23,7 @@ export default function ChatWindowCard({
   onModelChange,
   messages,
   isGenerating,
+  onOpenHistory,
 }: ChatWindowCardProps) {
   const copyToClipboard = useCallback(async (text: string) => {
     if (!text) {
@@ -123,6 +125,7 @@ export default function ChatWindowCard({
               type="text"
               icon={<History size={16} />}
               className="text-slate-500 hover:text-slate-700"
+              onClick={onOpenHistory}
             />
           </Tooltip>
         </Space>
