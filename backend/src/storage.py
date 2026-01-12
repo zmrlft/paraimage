@@ -74,10 +74,18 @@ class ChatSession(BaseModel):
         self.messages = json.dumps(messages, ensure_ascii=False)
 
 
+class AppSetting(BaseModel):
+    key = CharField(unique=True)
+    value = TextField(default="")
+    updated_at = DateTimeField(default=datetime.utcnow)
+
+
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     database.connect(reuse_if_open=True)
-    database.create_tables([Settings, CustomProvider, ChatSession], safe=True)
+    database.create_tables(
+        [Settings, CustomProvider, ChatSession, AppSetting], safe=True
+    )
 
 
 def ensure_db() -> None:
@@ -213,3 +221,23 @@ def upsert_chat_session(
     record.set_messages(messages)
     record.save()
     return record
+
+
+def get_app_setting(key: str) -> AppSetting | None:
+    ensure_db()
+    return AppSetting.get_or_none(AppSetting.key == key)
+
+
+def set_app_setting(key: str, value: str) -> AppSetting:
+    ensure_db()
+    record = AppSetting.get_or_none(AppSetting.key == key)
+    if record:
+        record.value = value
+        record.updated_at = datetime.utcnow()
+        record.save()
+        return record
+    return AppSetting.create(
+        key=key,
+        value=value,
+        updated_at=datetime.utcnow(),
+    )

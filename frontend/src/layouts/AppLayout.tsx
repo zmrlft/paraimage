@@ -6,9 +6,11 @@ import { getChatSessions, saveChatSession } from "../api/history";
 import ChatHistoryModal from "../components/ChatHistoryModal";
 import ChatWindowCard from "../components/ChatWindowCard";
 import ComposerPanel from "../components/ComposerPanel";
+import ImageManagerModal from "../components/ImageManagerModal";
 import Sidebar from "../components/Sidebar";
 import { modelMap, models, type ModelValue } from "../data/models";
 import type { ChatMessage, ChatSession, ImageReference } from "../types/chat";
+import type { ImageManagerItem } from "../types/image";
 import type { LayoutCount } from "../types/layout";
 
 const layoutGridMap: Record<LayoutCount, string> = {
@@ -102,6 +104,10 @@ export default function AppLayout() {
     modelId: ModelValue | null;
     windowId: number | null;
   }>({ open: false, modelId: null, windowId: null });
+  const [imageManager, setImageManager] = useState<{
+    open: boolean;
+    activeId: string | null;
+  }>({ open: false, activeId: null });
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
@@ -383,6 +389,39 @@ export default function AppLayout() {
     setSelectedSessionId(null);
   }, []);
 
+  const sourceImages = useMemo<ImageManagerItem[]>(() => {
+    const results: ImageManagerItem[] = [];
+    chatWindows.forEach((window) => {
+      window.messages.forEach((message) => {
+        if (message.role !== "assistant" || !message.imageUrl) {
+          return;
+        }
+        results.push({
+          id: `source-${window.id}-${message.id}`,
+          imageUrl: message.imageUrl,
+          origin: "source",
+          modelId: message.modelId ?? window.modelId,
+          windowId: window.id,
+          messageId: message.id,
+          createdAt: message.createdAt,
+        });
+      });
+    });
+    return results;
+  }, [chatWindows]);
+
+  const handleOpenImageManager = useCallback(
+    (payload: { windowId: number; messageId: string; imageUrl: string }) => {
+      const activeId = `source-${payload.windowId}-${payload.messageId}`;
+      setImageManager({ open: true, activeId });
+    },
+    []
+  );
+
+  const handleCloseImageManager = useCallback(() => {
+    setImageManager({ open: false, activeId: null });
+  }, []);
+
   const handleContinueSession = useCallback(
     (sessionId: string) => {
       if (!historyModal.modelId || historyModal.windowId === null) {
@@ -428,6 +467,7 @@ export default function AppLayout() {
                 {chatWindows.map((window) => (
                   <ChatWindowCard
                     key={window.id}
+                    windowId={window.id}
                     model={window.modelId}
                     onModelChange={(value) =>
                       handleModelChange(window.id, value)
@@ -437,6 +477,7 @@ export default function AppLayout() {
                     onOpenHistory={() =>
                       handleOpenHistory(window.id, window.modelId)
                     }
+                    onImageClick={handleOpenImageManager}
                   />
                 ))}
               </div>
@@ -460,6 +501,13 @@ export default function AppLayout() {
         onSelectSession={setSelectedSessionId}
         onContinue={handleContinueSession}
         onClose={handleCloseHistory}
+      />
+
+      <ImageManagerModal
+        open={imageManager.open}
+        images={sourceImages}
+        initialActiveId={imageManager.activeId}
+        onClose={handleCloseImageManager}
       />
     </div>
   );

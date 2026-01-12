@@ -11,19 +11,27 @@ import {
 import type { ChatMessage } from "../types/chat";
 
 type ChatWindowCardProps = {
+  windowId: number;
   model: ModelValue;
   onModelChange: (model: ModelValue) => void;
   messages: ChatMessage[];
   isGenerating: boolean;
   onOpenHistory?: () => void;
+  onImageClick?: (payload: {
+    windowId: number;
+    messageId: string;
+    imageUrl: string;
+  }) => void;
 };
 
 export default function ChatWindowCard({
+  windowId,
   model,
   onModelChange,
   messages,
   isGenerating,
   onOpenHistory,
+  onImageClick,
 }: ChatWindowCardProps) {
   const copyToClipboard = useCallback(async (text: string) => {
     if (!text) {
@@ -219,8 +227,15 @@ export default function ChatWindowCard({
                     <img
                       src={message.imageUrl}
                       alt={`${modelLabel} output`}
-                      className="mt-2 w-full rounded-xl object-cover"
+                      className="mt-2 w-full cursor-pointer rounded-xl object-cover transition hover:opacity-90"
                       loading="lazy"
+                      onClick={() =>
+                        onImageClick?.({
+                          windowId,
+                          messageId: message.id,
+                          imageUrl: message.imageUrl,
+                        })
+                      }
                     />
                   )
                 )}

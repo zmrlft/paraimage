@@ -4,6 +4,11 @@ import type { MenuProps } from "antd";
 import { Plus } from "lucide-react";
 
 import {
+  chooseSaveDirectory,
+  getAppSettings,
+  saveAppSettings,
+} from "../api/appSettings";
+import {
   getProviderConfigs,
   saveProviderConfig,
 } from "../api/settings";
@@ -86,6 +91,9 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [activeProviderId, setActiveProviderId] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [defaultSaveDir, setDefaultSaveDir] = useState<string>("");
+  const [isSavingData, setIsSavingData] = useState(false);
+  const [isPickingDir, setIsPickingDir] = useState(false);
 
   const updateConfig = useCallback(
     (id: string, patch: Partial<ProviderConfig>) => {
@@ -156,6 +164,28 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   }, [mergeConfigs, open]);
 
   useEffect(() => {
+    if (!open) {
+      return;
+    }
+    let active = true;
+    getAppSettings()
+      .then((settings) => {
+        if (!active) {
+          return;
+        }
+        setDefaultSaveDir(settings.defaultSaveDir ?? "");
+      })
+      .catch(() => {
+        if (active) {
+          setDefaultSaveDir("");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [open]);
+
+  useEffect(() => {
     if (!providerConfigs.length) {
       setActiveProviderId("");
       return;
@@ -199,6 +229,33 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     setProviderConfigs((prev) => [...prev, next]);
     setActiveProviderId(id);
   }, []);
+
+  const handleSaveData = useCallback(async () => {
+    if (isSavingData) {
+      return;
+    }
+    setIsSavingData(true);
+    const response = await saveAppSettings({
+      defaultSaveDir: defaultSaveDir.trim() || null,
+    });
+    if (response.ok) {
+      setDefaultSaveDir(response.defaultSaveDir ?? "");
+    }
+    setIsSavingData(false);
+  }, [defaultSaveDir, isSavingData]);
+
+  const handlePickDirectory = useCallback(async () => {
+    if (isPickingDir) {
+      return;
+    }
+    setIsPickingDir(true);
+    const response = await chooseSaveDirectory();
+    if (response.ok && response.directory) {
+      setDefaultSaveDir(response.directory);
+      await saveAppSettings({ defaultSaveDir: response.directory });
+    }
+    setIsPickingDir(false);
+  }, [isPickingDir]);
 
   const activeProvider = useMemo(
     () => providerConfigs.find((config) => config.id === activeProviderId),
@@ -409,6 +466,55 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     );
   }, [activeKey]);
 
+  const dataContent = useMemo(() => {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="text-base font-semibold text-slate-900">
+          数据与隐私
+        </div>
+        <div className="mt-1 text-xs text-slate-500">
+          设置图片默认保存路径，未设置时首次保存会弹出系统目录选择。
+        </div>
+        <div className="mt-4 space-y-3">
+          <div className="text-xs text-slate-500">图片默认保存路径</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={defaultSaveDir}
+              onChange={(event) => setDefaultSaveDir(event.target.value)}
+              placeholder="未设置时会在首次保存时弹出选择"
+              className="min-w-[320px] flex-1"
+            />
+            <Button
+              type="default"
+              onClick={handlePickDirectory}
+              loading={isPickingDir}
+              className="rounded-xl"
+            >
+              选择目录
+            </Button>
+            <Button
+              type="primary"
+              onClick={handleSaveData}
+              loading={isSavingData}
+              className="rounded-xl"
+            >
+              保存
+            </Button>
+          </div>
+          <div className="text-xs text-slate-400">
+            默认保存路径为空时，保存图片会先弹出系统文件夹选择。
+          </div>
+        </div>
+      </div>
+    );
+  }, [
+    defaultSaveDir,
+    handlePickDirectory,
+    handleSaveData,
+    isPickingDir,
+    isSavingData,
+  ]);
+
   return (
     <Modal
       title="设置"
@@ -434,7 +540,11 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           />
         </aside>
         <section className="flex min-h-0 flex-1 flex-col">
-          {activeKey === "providers" ? providerContent : placeholderContent}
+          {activeKey === "providers"
+            ? providerContent
+            : activeKey === "data"
+              ? dataContent
+              : placeholderContent}
         </section>
       </div>
     </Modal>

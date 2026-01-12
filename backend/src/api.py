@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 from services.generation import generate_batch, generate_single
+from services.image_processing import process_images
+from services.image_saving import choose_save_directory, save_images
 from storage import (
     CustomProvider,
     ChatSession,
@@ -11,13 +13,16 @@ from storage import (
     add_custom_provider,
     delete_custom_provider,
     get_custom_provider,
+    get_app_setting,
     init_db,
     list_chat_sessions,
     list_custom_providers,
     list_settings,
     save_settings,
+    set_app_setting,
     upsert_chat_session,
 )
+from schemas import AppSettingsPayload
 
 
 class ProApi:
@@ -149,3 +154,30 @@ class ProApi:
 
     def generate_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
         return generate_batch(payload)
+
+    def process_images(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return process_images(payload)
+
+    def save_images(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return save_images(payload, window=self._window)
+
+    def get_app_settings(self) -> dict[str, Any]:
+        default_save_dir = get_app_setting("default_save_dir")
+        return {"defaultSaveDir": default_save_dir.value if default_save_dir else None}
+
+    def save_app_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            request = AppSettingsPayload.model_validate(payload)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        if request.default_save_dir is None:
+            set_app_setting("default_save_dir", "")
+        else:
+            set_app_setting("default_save_dir", request.default_save_dir)
+        return {
+            "ok": True,
+            "defaultSaveDir": request.default_save_dir,
+        }
+
+    def choose_save_directory(self) -> dict[str, Any]:
+        return choose_save_directory(window=self._window)
