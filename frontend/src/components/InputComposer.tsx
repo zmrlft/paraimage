@@ -11,6 +11,7 @@ import { Button, Input, Tooltip, Upload } from "antd";
 import type { UploadFile, UploadProps } from "antd";
 import { BookOpen, Copy, ImagePlus, Send, Trash2 } from "lucide-react";
 
+import PromptLibraryModal from "./PromptLibraryModal";
 import "./InputComposer.css";
 
 const { TextArea } = Input;
@@ -32,6 +33,7 @@ export default function InputComposer({
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   const objectUrlMap = useRef(new Map<string, string>());
 
   const dropzoneClasses = useMemo(() => {
@@ -180,6 +182,19 @@ export default function InputComposer({
     }
   }, [fileList, isSending, message, onSend, sending]);
 
+  const handleOpenPromptLibrary = useCallback(() => {
+    setPromptLibraryOpen(true);
+  }, []);
+
+  const handleClosePromptLibrary = useCallback(() => {
+    setPromptLibraryOpen(false);
+  }, []);
+
+  const handleUsePrompt = useCallback((prompt: { content: string }) => {
+    setMessage(prompt.content);
+    setPromptLibraryOpen(false);
+  }, []);
+
   useEffect(() => {
     return () => {
       objectUrlMap.current.forEach((url) => URL.revokeObjectURL(url));
@@ -227,6 +242,7 @@ export default function InputComposer({
         <Button
           type="default"
           icon={<BookOpen size={16} />}
+          onClick={handleOpenPromptLibrary}
           className="rounded-2xl border-slate-200 bg-white/90 text-slate-700 shadow-sm"
         >
           提示词库
@@ -264,6 +280,12 @@ export default function InputComposer({
           </Button>
         </div>
       </div>
+
+      <PromptLibraryModal
+        open={promptLibraryOpen}
+        onClose={handleClosePromptLibrary}
+        onUsePrompt={handleUsePrompt}
+      />
     </div>
   );
 }

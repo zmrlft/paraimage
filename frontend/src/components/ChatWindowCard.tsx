@@ -1,6 +1,6 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Button, Card, Select, Space, Tooltip } from "antd";
-import { Copy, History, Share2, Trash2 } from "lucide-react";
+import { Copy, History, Images, Share2, Trash2, ZoomIn } from "lucide-react";
 
 import {
   getModelIconUrl,
@@ -9,6 +9,7 @@ import {
   type ModelValue,
 } from "../data/models";
 import type { ChatMessage } from "../types/chat";
+import ImagePreviewModal from "./ImagePreviewModal";
 
 type ChatWindowCardProps = {
   windowId: number;
@@ -33,6 +34,12 @@ export default function ChatWindowCard({
   onOpenHistory,
   onImageClick,
 }: ChatWindowCardProps) {
+  const [previewState, setPreviewState] = useState<{
+    open: boolean;
+    imageUrl: string;
+    title: string;
+  }>({ open: false, imageUrl: "", title: "" });
+
   const copyToClipboard = useCallback(async (text: string) => {
     if (!text) {
       return;
@@ -72,6 +79,14 @@ export default function ChatWindowCard({
   const activeModelIcon = activeModel
     ? getModelIconUrl(activeModel.iconSlug)
     : null;
+
+  const handleOpenPreview = useCallback((imageUrl: string, title: string) => {
+    setPreviewState({ open: true, imageUrl, title });
+  }, []);
+
+  const handleClosePreview = useCallback(() => {
+    setPreviewState((prev) => ({ ...prev, open: false }));
+  }, []);
 
   return (
     <Card
@@ -150,41 +165,40 @@ export default function ChatWindowCard({
             if (message.role === "user") {
               const content = message.prompt || "";
               return (
-                <div
-                  key={message.id}
-                  className="rounded-2xl bg-slate-100/80 p-3 text-sm text-slate-700"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                      你
-                    </div>
-                    <Tooltip title="复制内容">
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<Copy size={14} />}
-                        onClick={() => copyToClipboard(content)}
-                        disabled={!content}
-                        className="text-slate-400 hover:text-slate-600"
-                      />
-                    </Tooltip>
-                  </div>
-                  <div className="mt-2 whitespace-pre-wrap">
-                    {message.prompt || "已发送参考图"}
-                  </div>
-                  {message.references && message.references.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {message.references.map((ref) => (
-                        <img
-                          key={`${message.id}-${ref.name}`}
-                          src={ref.dataUrl}
-                          alt={ref.name}
-                          className="h-16 w-16 rounded-xl object-cover"
-                          loading="lazy"
+                <div key={message.id} className="flex justify-end">
+                  <div className="w-full max-w-[75%] rounded-2xl bg-slate-100/80 p-3 text-sm text-slate-700">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                        你
+                      </div>
+                      <Tooltip title="复制内容">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<Copy size={14} />}
+                          onClick={() => copyToClipboard(content)}
+                          disabled={!content}
+                          className="text-slate-400 hover:text-slate-600"
                         />
-                      ))}
+                      </Tooltip>
                     </div>
-                  )}
+                    <div className="mt-2 whitespace-pre-wrap">
+                      {message.prompt || "已发送参考图"}
+                    </div>
+                    {message.references && message.references.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {message.references.map((ref) => (
+                          <img
+                            key={`${message.id}-${ref.name}`}
+                            src={ref.dataUrl}
+                            alt={ref.name}
+                            className="h-12 w-12 rounded-xl object-cover"
+                            loading="lazy"
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             }
@@ -197,48 +211,80 @@ export default function ChatWindowCard({
               message.error || message.imageUrl || "";
 
             return (
-              <div
-                key={message.id}
-                className="rounded-2xl border border-slate-100 bg-white p-3 text-sm text-slate-700 shadow-sm"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                    {modelLabel}
+              <div key={message.id} className="flex justify-start">
+                <div className="w-full max-w-[75%] rounded-2xl border border-slate-100 bg-white p-3 text-sm text-slate-700 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                      {modelLabel}
+                    </div>
+                    <Tooltip
+                      title={message.error ? "复制错误" : "复制图片链接"}
+                    >
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<Copy size={14} />}
+                        onClick={() => copyToClipboard(assistantContent)}
+                        disabled={!assistantContent}
+                        className="text-slate-400 hover:text-slate-600"
+                      />
+                    </Tooltip>
                   </div>
-                  <Tooltip
-                    title={message.error ? "复制错误" : "复制图片链接"}
-                  >
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<Copy size={14} />}
-                      onClick={() => copyToClipboard(assistantContent)}
-                      disabled={!assistantContent}
-                      className="text-slate-400 hover:text-slate-600"
-                    />
-                  </Tooltip>
+                  {message.error ? (
+                    <div className="mt-2 text-sm text-rose-500">
+                      {message.error}
+                    </div>
+                  ) : (
+                    message.imageUrl && (
+                      <div className="group relative mt-2 w-full max-w-56">
+                        <img
+                          src={message.imageUrl}
+                          alt={`${modelLabel} output`}
+                          className="w-full cursor-pointer rounded-xl object-cover transition"
+                          loading="lazy"
+                          onClick={() =>
+                            handleOpenPreview(
+                              message.imageUrl,
+                              `${modelLabel} output`
+                            )
+                          }
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center gap-2 rounded-xl bg-slate-900/40 opacity-0 transition group-hover:opacity-100">
+                          <Tooltip title="打开图片管理">
+                            <Button
+                              type="primary"
+                              size="small"
+                              icon={<Images size={14} />}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onImageClick?.({
+                                  windowId,
+                                  messageId: message.id,
+                                  imageUrl: message.imageUrl,
+                                });
+                              }}
+                              className="rounded-full shadow-sm"
+                            />
+                          </Tooltip>
+                          <Tooltip title="放大预览">
+                            <Button
+                              size="small"
+                              icon={<ZoomIn size={14} />}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleOpenPreview(
+                                  message.imageUrl,
+                                  `${modelLabel} output`
+                                );
+                              }}
+                              className="rounded-full border-white/70 bg-white/90 text-slate-700 shadow-sm"
+                            />
+                          </Tooltip>
+                        </div>
+                      </div>
+                    )
+                  )}
                 </div>
-                {message.error ? (
-                  <div className="mt-2 text-sm text-rose-500">
-                    {message.error}
-                  </div>
-                ) : (
-                  message.imageUrl && (
-                    <img
-                      src={message.imageUrl}
-                      alt={`${modelLabel} output`}
-                      className="mt-2 w-full cursor-pointer rounded-xl object-cover transition hover:opacity-90"
-                      loading="lazy"
-                      onClick={() =>
-                        onImageClick?.({
-                          windowId,
-                          messageId: message.id,
-                          imageUrl: message.imageUrl,
-                        })
-                      }
-                    />
-                  )
-                )}
               </div>
             );
           })}
@@ -249,6 +295,13 @@ export default function ChatWindowCard({
           )}
         </div>
       </div>
+
+      <ImagePreviewModal
+        open={previewState.open}
+        imageUrl={previewState.imageUrl}
+        title={previewState.title}
+        onClose={handleClosePreview}
+      />
     </Card>
   );
 }

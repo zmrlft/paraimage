@@ -14,11 +14,13 @@ from storage import (
     delete_custom_provider,
     get_custom_provider,
     get_app_setting,
+    get_prompt_library,
     init_db,
     list_chat_sessions,
     list_custom_providers,
     list_settings,
     save_settings,
+    set_prompt_library,
     set_app_setting,
     upsert_chat_session,
 )
@@ -181,3 +183,13 @@ class ProApi:
 
     def choose_save_directory(self) -> dict[str, Any]:
         return choose_save_directory(window=self._window)
+
+    def get_prompt_library(self) -> dict[str, Any]:
+        return {"prompts": get_prompt_library()}
+
+    def save_prompt_library(self, payload: dict[str, Any]) -> dict[str, Any]:
+        prompts = payload.get("prompts") if isinstance(payload, dict) else payload
+        if not isinstance(prompts, list):
+            return {"ok": False, "error": "prompts must be a list"}
+        set_prompt_library(prompts)
+        return {"ok": True, "prompts": prompts}

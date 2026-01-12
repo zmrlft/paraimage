@@ -80,6 +80,9 @@ class AppSetting(BaseModel):
     updated_at = DateTimeField(default=datetime.utcnow)
 
 
+PROMPT_LIBRARY_KEY = "prompt_library"
+
+
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     database.connect(reuse_if_open=True)
@@ -240,4 +243,24 @@ def set_app_setting(key: str, value: str) -> AppSetting:
         key=key,
         value=value,
         updated_at=datetime.utcnow(),
+    )
+
+
+def get_prompt_library() -> list[dict]:
+    record = get_app_setting(PROMPT_LIBRARY_KEY)
+    if not record or not record.value:
+        return []
+    try:
+        payload = json.loads(record.value)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if isinstance(payload, list):
+        return payload
+    return []
+
+
+def set_prompt_library(prompts: list[dict]) -> AppSetting:
+    return set_app_setting(
+        PROMPT_LIBRARY_KEY,
+        json.dumps(prompts, ensure_ascii=False),
     )

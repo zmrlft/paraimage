@@ -6,6 +6,7 @@ import { processImages, type ProcessImagesAction } from "../api/imageProcessing"
 import { saveImages } from "../api/imageSaving";
 import { modelMap } from "../data/models";
 import type { ImageManagerItem } from "../types/image";
+import ImagePreviewModal from "./ImagePreviewModal";
 
 type ImageManagerModalProps = {
   open: boolean;
@@ -45,6 +46,11 @@ export default function ImageManagerModal({
   const [splitRows, setSplitRows] = useState(2);
   const [splitCols, setSplitCols] = useState(2);
   const wasOpenRef = useRef(false);
+  const [previewState, setPreviewState] = useState<{
+    open: boolean;
+    imageUrl: string;
+    title: string;
+  }>({ open: false, imageUrl: "", title: "" });
 
   useEffect(() => {
     if (!open) {
@@ -128,6 +134,22 @@ export default function ImageManagerModal({
       }
       return next;
     });
+  }, []);
+
+  const handleOpenPreview = useCallback(
+    (item: ImageManagerItem, label: string) => {
+      setActiveId(item.id);
+      setPreviewState({
+        open: true,
+        imageUrl: item.imageUrl,
+        title: label,
+      });
+    },
+    []
+  );
+
+  const handleClosePreview = useCallback(() => {
+    setPreviewState((prev) => ({ ...prev, open: false }));
   }, []);
 
   const handleSelectAll = useCallback(() => {
@@ -308,42 +330,53 @@ export default function ImageManagerModal({
       const label =
         item.origin === "processed" ? buildProcessedLabel(item) : modelLabel;
       return (
-        <button
+        <div
           key={item.id}
-          type="button"
-          onClick={() => toggleSelection(item.id)}
           className={`group relative overflow-hidden rounded-2xl border text-left transition ${
             isSelected
               ? "border-sky-400 bg-white ring-2 ring-sky-200"
               : "border-slate-100 bg-white hover:border-slate-200"
           }`}
         >
-          <div className="relative aspect-square w-full overflow-hidden">
-            <img
-              src={item.imageUrl}
-              alt={label}
-              className="h-full w-full object-cover"
-              loading="lazy"
-            />
-            <div className="absolute inset-0 bg-slate-900/10 opacity-0 transition group-hover:opacity-100" />
-          </div>
-          <div className="absolute left-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-white/60 bg-white/90 text-slate-500 shadow-sm">
+          <button
+            type="button"
+            onClick={() => handleOpenPreview(item, label)}
+            className="block w-full text-left"
+          >
+            <div className="relative aspect-square w-full overflow-hidden">
+              <img
+                src={item.imageUrl}
+                alt={label}
+                className="h-full w-full object-cover"
+                loading="lazy"
+              />
+              <div className="absolute inset-0 bg-slate-900/10 opacity-0 transition group-hover:opacity-100" />
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleSelection(item.id);
+            }}
+            className="absolute left-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-white/60 bg-white/90 text-slate-500 shadow-sm"
+          >
             {isSelected ? (
               <Check size={16} />
             ) : (
               <div className="h-2 w-2 rounded-full border border-slate-300" />
             )}
-          </div>
+          </button>
           <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between rounded-full bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow-sm">
             <span className="truncate">{label}</span>
             {item.origin === "processed" && (
               <span className="text-slate-400">结果</span>
             )}
           </div>
-        </button>
+        </div>
       );
     },
-    [selectedIds, toggleSelection]
+    [handleOpenPreview, selectedIds, toggleSelection]
   );
 
   return (
@@ -557,6 +590,13 @@ export default function ImageManagerModal({
           </div>
         </aside>
       </div>
+
+      <ImagePreviewModal
+        open={previewState.open}
+        imageUrl={previewState.imageUrl}
+        title={previewState.title}
+        onClose={handleClosePreview}
+      />
     </Modal>
   );
 }
