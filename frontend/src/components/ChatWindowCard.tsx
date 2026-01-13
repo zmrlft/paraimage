@@ -59,7 +59,7 @@ export default function ChatWindowCard({
     title: string;
   }>({ open: false, imageUrl: "", title: "" });
 
-  const copyToClipboard = useCallback(async (text: string) => {
+  const copyTextToClipboard = useCallback(async (text: string) => {
     if (!text) {
       return;
     }
@@ -76,6 +76,34 @@ export default function ChatWindowCard({
     document.execCommand("copy");
     document.body.removeChild(textarea);
   }, []);
+  const copyImageToClipboard = useCallback(
+    async (imageUrl: string) => {
+      if (!imageUrl) {
+        return;
+      }
+      const clipboardItemCtor = (
+        window as Window & { ClipboardItem?: typeof ClipboardItem }
+      ).ClipboardItem;
+      if (navigator?.clipboard?.write && clipboardItemCtor) {
+        try {
+          const response = await fetch(imageUrl);
+          if (!response.ok) {
+            throw new Error("Failed to fetch image for clipboard");
+          }
+          const blob = await response.blob();
+          const mimeType = blob.type || "image/png";
+          await navigator.clipboard.write([
+            new clipboardItemCtor({ [mimeType]: blob }),
+          ]);
+          return;
+        } catch {
+          // Fall back to copying the image URL.
+        }
+      }
+      await copyTextToClipboard(imageUrl);
+    },
+    [copyTextToClipboard]
+  );
   const selectOptions = useMemo(
     () =>
       models.map((item) => ({
@@ -198,7 +226,7 @@ export default function ChatWindowCard({
                 !onRetryMessage || isGenerating || !hasRetryContent;
               return (
                 <div key={message.id} className="flex justify-end">
-                  <div className="w-full max-w-[75%] rounded-2xl bg-slate-100/80 p-3 text-sm text-slate-700">
+                  <div className="w-full max-w-[75%] rounded-2xl bg-slate-100/80 p-3 text-sm text-slate-700 select-text">
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
                         你
@@ -221,24 +249,24 @@ export default function ChatWindowCard({
                             type="text"
                             size="small"
                             icon={<Copy size={14} />}
-                            onClick={() => copyToClipboard(content)}
+                            onClick={() => copyTextToClipboard(content)}
                             disabled={!content}
                             className="text-slate-400 hover:text-slate-600"
                           />
                         </Tooltip>
                       </div>
                     </div>
-                    <div className="mt-2 whitespace-pre-wrap">
+                    <div className="mt-2 whitespace-pre-wrap select-text">
                       {message.prompt || "已发送参考图"}
                     </div>
                     {message.references && message.references.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
+                      <div className="mt-2 flex flex-wrap gap-2 select-auto">
                         {message.references.map((ref) => (
                           <img
                             key={`${message.id}-${ref.name}`}
                             src={ref.dataUrl}
                             alt={ref.name}
-                            className="h-12 w-12 rounded-xl object-cover"
+                            className="h-12 w-12 rounded-xl object-cover select-auto"
                             loading="lazy"
                           />
                         ))}
@@ -253,25 +281,28 @@ export default function ChatWindowCard({
               (message.modelId && modelMap.get(message.modelId)?.label) ||
               activeModel?.label ||
               "模型";
-            const assistantContent =
-              message.error || message.imageUrl || "";
+            const copyDisabled = !message.error && !message.imageUrl;
 
             return (
               <div key={message.id} className="flex justify-start">
-                <div className="w-full max-w-[75%] rounded-2xl border border-slate-100 bg-white p-3 text-sm text-slate-700 shadow-sm">
+                <div className="w-full max-w-[75%] rounded-2xl border border-slate-100 bg-white p-3 text-sm text-slate-700 shadow-sm select-text">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
                       {modelLabel}
                     </div>
                     <Tooltip
-                      title={message.error ? "复制错误" : "复制图片链接"}
+                      title={message.error ? "复制错误" : "复制图片"}
                     >
                       <Button
                         type="text"
                         size="small"
                         icon={<Copy size={14} />}
-                        onClick={() => copyToClipboard(assistantContent)}
-                        disabled={!assistantContent}
+                        onClick={() =>
+                          message.error
+                            ? copyTextToClipboard(message.error)
+                            : copyImageToClipboard(message.imageUrl || "")
+                        }
+                        disabled={copyDisabled}
                         className="text-slate-400 hover:text-slate-600"
                       />
                     </Tooltip>
@@ -282,11 +313,11 @@ export default function ChatWindowCard({
                     </div>
                   ) : (
                     message.imageUrl && (
-                      <div className="group relative mt-2 w-full max-w-56">
+                      <div className="group relative mt-2 w-full max-w-56 select-auto">
                         <img
                           src={message.imageUrl}
                           alt={`${modelLabel} output`}
-                          className="w-full cursor-pointer rounded-xl object-cover transition"
+                          className="w-full cursor-pointer rounded-xl object-cover transition select-auto"
                           loading="lazy"
                           onClick={() =>
                             handleOpenPreview(

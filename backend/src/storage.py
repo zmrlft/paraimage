@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from peewee import CharField, DateTimeField, Model, SqliteDatabase, TextField
 
@@ -60,6 +62,116 @@ class AppSetting(BaseModel):
 
 
 PROMPT_LIBRARY_KEY = "prompt_library"
+PROMPT_LIBRARY_PATH_ENV = "OMNIIMAGE_PROMPT_LIBRARY_PATH"
+
+
+def _build_prompt_title(content: str) -> str:
+    trimmed = " ".join(content.split())
+    if not trimmed:
+        return "Untitled prompt"
+    return trimmed if len(trimmed) <= 24 else f"{trimmed[:24]}..."
+
+
+def _normalize_prompt_item(item: object, now: str) -> dict | None:
+    if isinstance(item, str):
+        content = item.strip()
+        if not content:
+            return None
+        return {
+            "id": f"prompt-{uuid4().hex}",
+            "title": _build_prompt_title(content),
+            "content": content,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+    if not isinstance(item, dict):
+        return None
+    content_raw = (
+        item.get("content")
+        if isinstance(item.get("content"), str)
+        else item.get("prompt")
+        if isinstance(item.get("prompt"), str)
+        else item.get("text")
+        if isinstance(item.get("text"), str)
+        else ""
+    )
+    content = content_raw.strip() if isinstance(content_raw, str) else ""
+    if not content:
+        return None
+    title_raw = item.get("title") if isinstance(item.get("title"), str) else ""
+    title = title_raw.strip() if isinstance(title_raw, str) else ""
+    if not title:
+        title = _build_prompt_title(content)
+    prompt_id = item.get("id") if isinstance(item.get("id"), str) else ""
+    if not prompt_id:
+        prompt_id = f"prompt-{uuid4().hex}"
+    created_at = item.get("createdAt") if isinstance(item.get("createdAt"), str) else now
+    updated_at = item.get("updatedAt") if isinstance(item.get("updatedAt"), str) else now
+    return {
+        "id": prompt_id,
+        "title": title,
+        "content": content,
+        "createdAt": created_at,
+        "updatedAt": updated_at,
+    }
+
+
+def _parse_prompt_library_payload(payload: object) -> list[dict]:
+    items: list[object]
+    if isinstance(payload, dict):
+        candidate = payload.get("prompts") or payload.get("items")
+        if not isinstance(candidate, list):
+            return []
+        items = candidate
+    elif isinstance(payload, list):
+        items = payload
+    else:
+        return []
+    now = datetime.utcnow().isoformat()
+    normalized: list[dict] = []
+    for item in items:
+        prompt_item = _normalize_prompt_item(item, now)
+        if prompt_item:
+            normalized.append(prompt_item)
+    return normalized
+
+
+def _load_default_prompt_library() -> list[dict]:
+    candidates: list[Path] = []
+    env_path = os.environ.get(PROMPT_LIBRARY_PATH_ENV)
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.extend(
+        [
+            Path(__file__).resolve().parent.parent.parent / "prompt-library.json",
+            DATA_DIR / "prompt-library.json",
+            Path.cwd() / "prompt-library.json",
+        ]
+    )
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            raw = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        prompts = _parse_prompt_library_payload(payload)
+        if prompts:
+            return prompts
+    return []
+
+
+def _seed_prompt_library() -> None:
+    record = get_app_setting(PROMPT_LIBRARY_KEY)
+    if record is not None:
+        return
+    prompts = _load_default_prompt_library()
+    if prompts:
+        set_prompt_library(prompts)
 
 
 def init_db() -> None:
@@ -70,6 +182,7 @@ def init_db() -> None:
     )
     _ensure_settings_model_ids_column()
     _migrate_legacy_custom_providers()
+    _seed_prompt_library()
 
 
 def ensure_db() -> None:
