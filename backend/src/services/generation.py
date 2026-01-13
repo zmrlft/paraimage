@@ -4,17 +4,20 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from providers.aihubmix_provider import generate_image as generate_aihubmix_image
+from providers.dashscope_provider import generate_image as generate_dashscope_image
 from providers.gemini_provider import generate_image as generate_gemini_image
 from providers.openai_provider import generate_image
 from schemas import BatchGenerateRequest, GenerateRequest, GenerateResponse
 from storage import get_settings
 from utils import (
     collect_reference_images,
-    get_provider_settings,
+    is_aihubmix_provider,
+    is_dashscope_provider,
     is_seedream_provider,
     resolve_default_base_url,
     resolve_provider_model_id,
-    resolve_provider_name_with_custom,
+    resolve_provider_name,
 )
 
 
@@ -24,11 +27,11 @@ def generate_single(payload: dict[str, Any]) -> dict[str, Any]:
     except ValidationError as exc:
         return {"ok": False, "error": exc.errors()}
 
-    # Resolve provider with custom provider priority
+    # Resolve provider
     if request.provider_name:
         provider_name = request.provider_name
     else:
-        provider_name, is_custom = resolve_provider_name_with_custom(request.model_id)
+        provider_name = resolve_provider_name(request.model_id)
 
     if not provider_name:
         return {
@@ -38,8 +41,7 @@ def generate_single(payload: dict[str, Any]) -> dict[str, Any]:
             "prompt": request.prompt,
         }
 
-    # Get provider settings (custom or built-in, custom takes priority)
-    settings = get_provider_settings(provider_name)
+    settings = get_settings(provider_name)
     if not settings or not settings.api_key:
         return {
             "ok": False,
@@ -63,7 +65,25 @@ def generate_single(payload: dict[str, Any]) -> dict[str, Any]:
     provider_model_id = resolve_provider_model_id(
         provider_name, request.model_id
     )
-    if provider_name == "Google Gemini":
+    if is_dashscope_provider(provider_name, base_url or "", request.model_id):
+        image_url, error = generate_dashscope_image(
+            model_id=provider_model_id,
+            prompt=request.prompt,
+            size=request.size,
+            base_url=base_url or "",
+            api_key=settings.api_key,
+            references=references,
+        )
+    elif is_aihubmix_provider(provider_name, base_url or ""):
+        image_url, error = generate_aihubmix_image(
+            model_id=provider_model_id,
+            prompt=request.prompt,
+            size=request.size,
+            base_url=base_url or "",
+            api_key=settings.api_key,
+            references=references,
+        )
+    elif provider_name == "Google Gemini":
         image_url, error = generate_gemini_image(
             model_id=provider_model_id,
             prompt=request.prompt,
@@ -112,11 +132,11 @@ def generate_batch(payload: dict[str, Any]) -> dict[str, Any]:
 
     provider_name_override = request.provider_name
     for model_id in request.model_ids:
-        # Resolve provider with custom provider priority
+        # Resolve provider
         if provider_name_override:
             provider_name = provider_name_override
         else:
-            provider_name, is_custom = resolve_provider_name_with_custom(model_id)
+            provider_name = resolve_provider_name(model_id)
 
         if not provider_name:
             images.append(
@@ -129,8 +149,7 @@ def generate_batch(payload: dict[str, Any]) -> dict[str, Any]:
             )
             continue
 
-        # Get provider settings (custom or built-in, custom takes priority)
-        settings = get_provider_settings(provider_name)
+        settings = get_settings(provider_name)
         if not settings or not settings.api_key:
             images.append(
                 {
@@ -157,7 +176,25 @@ def generate_batch(payload: dict[str, Any]) -> dict[str, Any]:
             continue
 
         provider_model_id = resolve_provider_model_id(provider_name, model_id)
-        if provider_name == "Google Gemini":
+        if is_dashscope_provider(provider_name, base_url or "", model_id):
+            image_url, error = generate_dashscope_image(
+                model_id=provider_model_id,
+                prompt=request.prompt,
+                size=request.size,
+                base_url=base_url or "",
+                api_key=settings.api_key,
+                references=references,
+            )
+        elif is_aihubmix_provider(provider_name, base_url or ""):
+            image_url, error = generate_aihubmix_image(
+                model_id=provider_model_id,
+                prompt=request.prompt,
+                size=request.size,
+                base_url=base_url or "",
+                api_key=settings.api_key,
+                references=references,
+            )
+        elif provider_name == "Google Gemini":
             image_url, error = generate_gemini_image(
                 model_id=provider_model_id,
                 prompt=request.prompt,

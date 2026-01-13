@@ -1,67 +1,118 @@
 import { getLobeIconsCDNUrlFn, type Theme } from "../utils/lobeIcons";
+import type { ProviderConfig } from "../types/provider";
 
-export type ModelValue =
-  | "seedream-4.5"
-  | "doubao-seedream-4-0-250828"
-  | "gpt-image-1"
-  | "nano-banana"
-  | "nano-banana-pro"
-  | "qwen-image";
+export type ModelValue = string;
 
 export type ModelDefinition = {
   value: ModelValue;
+  modelId: string;
   label: string;
-  iconSlug: string;
-  provider: string;
+  providerName: string;
+  iconSlug?: string;
+};
+
+export type ProviderPreset = {
+  providerName: string;
+  iconSlug?: string;
   defaultBaseUrl?: string;
 };
 
-export const models: ModelDefinition[] = [
+export const providerPresets: ProviderPreset[] = [
   {
-    value: "seedream-4.5",
-    label: "Seedream 4.5",
+    providerName: "Volcengine Ark",
     iconSlug: "doubao-color",
-    provider: "Volcengine Ark",
     defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3",
   },
   {
-    value: "doubao-seedream-4-0-250828",
-    label: "Seedream 4.0",
-    iconSlug: "doubao-color",
-    provider: "Volcengine Ark",
-    defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-  },
-  {
-    value: "gpt-image-1",
-    label: "GPT-Image-1",
+    providerName: "OpenAI",
     iconSlug: "openai",
-    provider: "OpenAI",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
-    value: "nano-banana",
-    label: "nano-banana",
+    providerName: "Google Gemini",
     iconSlug: "gemini-color",
-    provider: "Google Gemini",
     defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
   },
   {
-    value: "nano-banana-pro",
-    label: "nano-banana-pro",
-    iconSlug: "gemini-color",
-    provider: "Google Gemini",
-    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
-  },
-  {
-    value: "qwen-image",
-    label: "Qwen-Image",
+    providerName: "Alibaba DashScope",
     iconSlug: "qwen-color",
-    provider: "Alibaba DashScope",
-    defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    defaultBaseUrl: "https://dashscope.aliyuncs.com/api/v1",
+  },
+  {
+    providerName: "AIHubMix",
+    iconSlug: "/logo.png",
+    defaultBaseUrl: "https://aihubmix.com/v1",
   },
 ];
 
-export const modelMap = new Map(models.map((model) => [model.value, model]));
+const providerPresetMap = new Map(
+  providerPresets.map((preset) => [preset.providerName, preset])
+);
 
-export const getModelIconUrl = (iconSlug: string, theme: Theme = "light") =>
-  getLobeIconsCDNUrlFn(iconSlug)(theme);
+export const getProviderPreset = (providerName: string) =>
+  providerPresetMap.get(providerName);
+
+export const buildModelKey = (providerName: string, modelId: string) =>
+  `${providerName}::${modelId}`;
+
+export const buildModelLabel = (modelId: string, providerName: string) =>
+  `${modelId} (${providerName})`;
+
+export const getProviderInitial = (providerName: string) =>
+  providerName.trim().slice(0, 1).toUpperCase() || "?";
+
+const normalizeModelId = (modelId: string) => modelId.trim();
+
+export const buildModelList = (
+  providers: ProviderConfig[]
+): ModelDefinition[] => {
+  const results: ModelDefinition[] = [];
+  const seen = new Set<string>();
+
+  providers.forEach((provider) => {
+    const providerName = provider.providerName.trim();
+    if (!providerName) {
+      return;
+    }
+    const preset = getProviderPreset(providerName);
+    const providerIconSlug = provider.iconSlug ?? preset?.iconSlug;
+    const modelIds = provider.modelIds ?? [];
+    modelIds.forEach((modelId) => {
+      const trimmed = normalizeModelId(modelId);
+      if (!trimmed) {
+        return;
+      }
+      const normalizedModelId = trimmed
+        .toLowerCase()
+        .replace(/[\s_]+/g, "-");
+      const isNanoBanana =
+        providerName === "AIHubMix" &&
+        normalizedModelId.startsWith("nano-banana");
+      const iconSlug = isNanoBanana ? "/banana.png" : providerIconSlug;
+      const key = buildModelKey(providerName, trimmed);
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      results.push({
+        value: key,
+        modelId: trimmed,
+        label: buildModelLabel(trimmed, providerName),
+        providerName,
+        iconSlug,
+      });
+    });
+  });
+
+  return results;
+};
+
+export const buildModelMap = (models: ModelDefinition[]) =>
+  new Map(models.map((model) => [model.value, model]));
+
+export const getModelIconUrl = (iconSlug: string, theme: Theme = "light") => {
+  if (iconSlug.startsWith("/") || iconSlug.startsWith("http")) {
+    return iconSlug;
+  }
+  return getLobeIconsCDNUrlFn(iconSlug)(theme);
+};

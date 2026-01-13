@@ -1,11 +1,20 @@
 import { useCallback, useMemo, useState } from "react";
 import { Button, Card, Select, Space, Tooltip } from "antd";
-import { Copy, History, Images, Share2, Trash2, ZoomIn } from "lucide-react";
+import {
+  Copy,
+  History,
+  Images,
+  RotateCw,
+  Share2,
+  Trash2,
+  X,
+  ZoomIn,
+} from "lucide-react";
 
 import {
   getModelIconUrl,
-  modelMap,
-  models,
+  getProviderInitial,
+  type ModelDefinition,
   type ModelValue,
 } from "../data/models";
 import type { ChatMessage } from "../types/chat";
@@ -13,7 +22,9 @@ import ImagePreviewModal from "./ImagePreviewModal";
 
 type ChatWindowCardProps = {
   windowId: number;
-  model: ModelValue;
+  model: ModelValue | null;
+  models: ModelDefinition[];
+  modelMap: Map<ModelValue, ModelDefinition>;
   onModelChange: (model: ModelValue) => void;
   messages: ChatMessage[];
   isGenerating: boolean;
@@ -23,16 +34,24 @@ type ChatWindowCardProps = {
     messageId: string;
     imageUrl: string;
   }) => void;
+  onClose?: () => void;
+  canClose?: boolean;
+  onRetryMessage?: (payload: { windowId: number; message: ChatMessage }) => void;
 };
 
 export default function ChatWindowCard({
   windowId,
   model,
+  models,
+  modelMap,
   onModelChange,
   messages,
   isGenerating,
   onOpenHistory,
   onImageClick,
+  onClose,
+  canClose = true,
+  onRetryMessage,
 }: ChatWindowCardProps) {
   const [previewState, setPreviewState] = useState<{
     open: boolean;
@@ -63,22 +82,27 @@ export default function ChatWindowCard({
         value: item.value,
         label: (
           <div className="flex items-center gap-2">
-            <img
-              src={getModelIconUrl(item.iconSlug)}
-              alt={`${item.label} logo`}
-              className="h-5 w-5 rounded-full object-cover"
-              loading="lazy"
-            />
+            {item.iconSlug ? (
+              <img
+                src={getModelIconUrl(item.iconSlug)}
+                alt={`${item.label} logo`}
+                className="h-5 w-5 rounded-full object-cover"
+                loading="lazy"
+              />
+            ) : (
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-600">
+                {getProviderInitial(item.providerName)}
+              </div>
+            )}
             <span>{item.label}</span>
           </div>
         ),
       })),
-    []
+    [models]
   );
-  const activeModel = modelMap.get(model);
-  const activeModelIcon = activeModel
-    ? getModelIconUrl(activeModel.iconSlug)
-    : null;
+  const activeModel = model ? modelMap.get(model) : undefined;
+  const hasModels = models.length > 0;
+  const closeDisabled = !onClose || !canClose;
 
   const handleOpenPreview = useCallback((imageUrl: string, title: string) => {
     setPreviewState({ open: true, imageUrl, title });
@@ -108,22 +132,16 @@ export default function ChatWindowCard({
       }}
       title={
         <div className="flex items-center gap-2">
-          {activeModelIcon && (
-            <img
-              src={activeModelIcon}
-              alt={`${activeModel?.label ?? "model"} logo`}
-              className="h-6 w-6 rounded-full object-cover"
-              loading="lazy"
-            />
-          )}
           <Select
-            value={model}
+            value={model ?? undefined}
             onChange={(value) => onModelChange(value as ModelValue)}
             options={selectOptions}
             size="large"
             className="min-w-40"
             popupMatchSelectWidth={200}
             variant={"borderless"}
+            placeholder={hasModels ? "选择模型" : "未配置模型"}
+            disabled={!hasModels}
           />
         </div>
       }
@@ -151,6 +169,15 @@ export default function ChatWindowCard({
               onClick={onOpenHistory}
             />
           </Tooltip>
+          <Tooltip title={closeDisabled ? "至少保留一个聊天卡片" : "关闭"}>
+            <Button
+              type="text"
+              icon={<X size={16} />}
+              className="text-slate-500 hover:text-slate-700"
+              onClick={onClose}
+              disabled={closeDisabled}
+            />
+          </Tooltip>
         </Space>
       }
     >
@@ -164,6 +191,11 @@ export default function ChatWindowCard({
           {messages.map((message) => {
             if (message.role === "user") {
               const content = message.prompt || "";
+              const hasRetryContent =
+                content.trim().length > 0 ||
+                (message.references && message.references.length > 0);
+              const retryDisabled =
+                !onRetryMessage || isGenerating || !hasRetryContent;
               return (
                 <div key={message.id} className="flex justify-end">
                   <div className="w-full max-w-[75%] rounded-2xl bg-slate-100/80 p-3 text-sm text-slate-700">
@@ -171,16 +203,30 @@ export default function ChatWindowCard({
                       <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
                         你
                       </div>
-                      <Tooltip title="复制内容">
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={<Copy size={14} />}
-                          onClick={() => copyToClipboard(content)}
-                          disabled={!content}
-                          className="text-slate-400 hover:text-slate-600"
-                        />
-                      </Tooltip>
+                      <div className="flex items-center gap-1">
+                        <Tooltip title="重试">
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<RotateCw size={14} />}
+                            onClick={() =>
+                              onRetryMessage?.({ windowId, message })
+                            }
+                            disabled={retryDisabled}
+                            className="text-slate-400 hover:text-slate-600"
+                          />
+                        </Tooltip>
+                        <Tooltip title="复制内容">
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<Copy size={14} />}
+                            onClick={() => copyToClipboard(content)}
+                            disabled={!content}
+                            className="text-slate-400 hover:text-slate-600"
+                          />
+                        </Tooltip>
+                      </div>
                     </div>
                     <div className="mt-2 whitespace-pre-wrap">
                       {message.prompt || "已发送参考图"}

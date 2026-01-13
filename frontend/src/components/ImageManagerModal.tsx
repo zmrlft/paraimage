@@ -4,7 +4,7 @@ import { Check, Crop, Download, Eraser, Images, X } from "lucide-react";
 
 import { processImages, type ProcessImagesAction } from "../api/imageProcessing";
 import { saveImages } from "../api/imageSaving";
-import { modelMap } from "../data/models";
+import type { ModelDefinition, ModelValue } from "../data/models";
 import type { ImageManagerItem } from "../types/image";
 import ImagePreviewModal from "./ImagePreviewModal";
 
@@ -12,6 +12,7 @@ type ImageManagerModalProps = {
   open: boolean;
   images: ImageManagerItem[];
   initialActiveId?: string | null;
+  modelMap: Map<ModelValue, ModelDefinition>;
   onClose: () => void;
 };
 
@@ -34,6 +35,7 @@ export default function ImageManagerModal({
   open,
   images,
   initialActiveId,
+  modelMap,
   onClose,
 }: ImageManagerModalProps) {
   const [items, setItems] = useState<ImageManagerItem[]>([]);
@@ -376,7 +378,7 @@ export default function ImageManagerModal({
         </div>
       );
     },
-    [handleOpenPreview, selectedIds, toggleSelection]
+    [handleOpenPreview, modelMap, selectedIds, toggleSelection]
   );
 
   return (

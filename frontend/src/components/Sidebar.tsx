@@ -5,38 +5,59 @@ import {
   ChevronLeft,
   ChevronRight,
   Github,
+  Images,
   Settings,
 } from "lucide-react";
 
-import { models, getModelIconUrl } from "../data/models";
+import {
+  getModelIconUrl,
+  getProviderInitial,
+  type ModelDefinition,
+  type ModelValue,
+} from "../data/models";
 import SettingsModal from "./SettingsModal";
 import { layoutCounts, type LayoutCount } from "../types/layout";
 
 type SidebarProps = {
   layoutCount: LayoutCount;
   onLayoutChange: (count: LayoutCount) => void;
+  models: ModelDefinition[];
+  onProvidersSaved: () => void;
+  onModelSelect?: (modelId: ModelValue) => void;
+  onOpenImageManager?: () => void;
 };
 
 const repoUrl = "https://github.com/your-org/omniimage";
 
-const modelItems: MenuProps["items"] = models.map((model) => ({
-  key: model.value,
-  icon: (
-    <img
-      src={getModelIconUrl(model.iconSlug)}
-      alt={`${model.label} logo`}
-      className="h-4 w-4 rounded-full object-cover"
-      loading="lazy"
-    />
-  ),
-  label: model.label,
-}));
-
 const { Sider } = Layout;
 
-export default function Sidebar({ layoutCount, onLayoutChange }: SidebarProps) {
+export default function Sidebar({
+  layoutCount,
+  onLayoutChange,
+  models,
+  onProvidersSaved,
+  onModelSelect,
+  onOpenImageManager,
+}: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const modelItems: MenuProps["items"] = models.map((model) => ({
+    key: model.value,
+    icon: model.iconSlug ? (
+      <img
+        src={getModelIconUrl(model.iconSlug)}
+        alt={`${model.label} logo`}
+        className="h-4 w-4 rounded-full object-cover"
+        loading="lazy"
+      />
+    ) : (
+      <div className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 text-[9px] font-semibold text-slate-600">
+        {getProviderInitial(model.providerName)}
+      </div>
+    ),
+    label: model.label,
+  }));
 
   return (
     <Sider
@@ -58,13 +79,18 @@ export default function Sidebar({ layoutCount, onLayoutChange }: SidebarProps) {
           }
         >
           <div className="flex items-center gap-3">
-            <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-sky-500 via-cyan-400 to-emerald-400" />
+            <img
+              src="/app.png"
+              alt="ParaImage logo"
+              className="h-11 w-11 rounded-2xl object-cover"
+              loading="lazy"
+            />
             {!collapsed && (
               <div>
                 <div className="text-lg font-semibold text-slate-900">
-                  OmniImage
+                  多模生图
                 </div>
-                <div className="text-xs text-slate-500">Workspace Shell</div>
+                <div className="text-xs text-slate-500">ParaImage</div>
               </div>
             )}
           </div>
@@ -118,13 +144,22 @@ export default function Sidebar({ layoutCount, onLayoutChange }: SidebarProps) {
             </div>
           )}
           <div className="rounded-2xl border border-slate-100 bg-white/80 p-2">
-            <Menu
-              mode="inline"
-              inlineCollapsed={collapsed}
-              items={modelItems}
-              className="bg-transparent"
-              style={{ background: "transparent", borderInlineEnd: 0 }}
-            />
+            {models.length ? (
+              <Menu
+                mode="inline"
+                inlineCollapsed={collapsed}
+                items={modelItems}
+                onClick={(event) =>
+                  onModelSelect?.(event.key as ModelValue)
+                }
+                className="bg-transparent"
+                style={{ background: "transparent", borderInlineEnd: 0 }}
+              />
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-center text-xs text-slate-400">
+                {collapsed ? "--" : "暂无模型"}
+              </div>
+            )}
           </div>
         </div>
 
@@ -149,6 +184,14 @@ export default function Sidebar({ layoutCount, onLayoutChange }: SidebarProps) {
                 className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/80 text-slate-700 shadow-sm transition hover:bg-white"
               />
             </Tooltip>
+            <Tooltip title="图片管理">
+              <Button
+                type="text"
+                icon={<Images size={18} />}
+                onClick={onOpenImageManager}
+                className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/80 text-slate-700 shadow-sm transition hover:bg-white"
+              />
+            </Tooltip>
             <Tooltip title="设置">
               <Button
                 type="text"
@@ -164,6 +207,7 @@ export default function Sidebar({ layoutCount, onLayoutChange }: SidebarProps) {
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        onProvidersSaved={onProvidersSaved}
       />
     </Sider>
   );

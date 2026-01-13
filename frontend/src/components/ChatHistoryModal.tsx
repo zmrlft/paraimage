@@ -2,12 +2,13 @@ import { useMemo, useState } from "react";
 import { Button, Input, Modal } from "antd";
 import { ArrowRight, Search } from "lucide-react";
 
-import { modelMap, type ModelValue } from "../data/models";
+import type { ModelDefinition, ModelValue } from "../data/models";
 import type { ChatSession } from "../types/chat";
 
 type ChatHistoryModalProps = {
   open: boolean;
   modelId: ModelValue | null;
+  modelMap: Map<ModelValue, ModelDefinition>;
   sessions: ChatSession[];
   selectedSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
@@ -29,6 +30,7 @@ const buildSessionTitle = (title: string) => {
 export default function ChatHistoryModal({
   open,
   modelId,
+  modelMap,
   sessions,
   selectedSessionId,
   onSelectSession,

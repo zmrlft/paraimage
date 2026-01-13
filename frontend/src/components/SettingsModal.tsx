@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Input, Menu, Modal, Tag } from "antd";
+import { Button, Input, Menu, Modal, Select } from "antd";
 import type { MenuProps } from "antd";
-import { Plus } from "lucide-react";
 
 import {
   chooseSaveDirectory,
@@ -12,47 +11,28 @@ import {
   getProviderConfigs,
   saveProviderConfig,
 } from "../api/settings";
-import { getModelIconUrl, models } from "../data/models";
+import { getModelIconUrl, providerPresets } from "../data/models";
+import type { ProviderConfig } from "../types/provider";
 
 type SettingsModalProps = {
   open: boolean;
   onClose: () => void;
-};
-
-type ProviderConfig = {
-  id: string;
-  providerName: string;
-  baseUrl: string;
-  apiKey: string;
-  iconSlug?: string;
-  isCustom?: boolean;
+  onProvidersSaved?: () => void;
 };
 
 const createPresetConfigs = (): ProviderConfig[] => {
-  const seen = new Set<string>();
-  return models.flatMap((model) => {
-    if (seen.has(model.provider)) {
-      return [];
-    }
-    seen.add(model.provider);
-    return [
-      {
-        id: model.provider,
-        providerName: model.provider,
-        baseUrl: model.defaultBaseUrl ?? "",
-        apiKey: "",
-        iconSlug: model.iconSlug,
-        isCustom: false,
-      },
-    ];
-  });
+  return providerPresets.map((preset) => ({
+    id: preset.providerName,
+    providerName: preset.providerName,
+    baseUrl: preset.defaultBaseUrl ?? "",
+    apiKey: "",
+    modelIds: [],
+    iconSlug: preset.iconSlug,
+  }));
 };
 
 const settingsMenuItems: MenuProps["items"] = [
   { key: "providers", label: "AI 供应商配置" },
-  { key: "defaults", label: "默认模型" },
-  { key: "appearance", label: "界面外观" },
-  { key: "shortcuts", label: "快捷键" },
   { key: "data", label: "数据与隐私" },
   { key: "experiments", label: "实验功能" },
 ];
@@ -83,7 +63,11 @@ const placeholderMap: Record<string, { title: string; tips: string[] }> = {
   },
 };
 
-export default function SettingsModal({ open, onClose }: SettingsModalProps) {
+export default function SettingsModal({
+  open,
+  onClose,
+  onProvidersSaved,
+}: SettingsModalProps) {
   const [activeKey, setActiveKey] = useState<string>("providers");
   const [providerConfigs, setProviderConfigs] = useState<ProviderConfig[]>(
     createPresetConfigs
@@ -94,6 +78,15 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [defaultSaveDir, setDefaultSaveDir] = useState<string>("");
   const [isSavingData, setIsSavingData] = useState(false);
   const [isPickingDir, setIsPickingDir] = useState(false);
+  const availableKeys = useMemo(
+    () =>
+      new Set(
+        settingsMenuItems
+          .map((item) => (item ? String(item.key) : ""))
+          .filter((key) => key)
+      ),
+    []
+  );
 
   const updateConfig = useCallback(
     (id: string, patch: Partial<ProviderConfig>) => {
@@ -104,38 +97,50 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     []
   );
 
-  const mergeConfigs = useCallback((saved: ProviderConfig[]) => {
-    const presetDefaults = createPresetConfigs();
-    const presetMap = new Map(
-      presetDefaults.map((config) => [config.providerName, config])
-    );
-    const customConfigs: ProviderConfig[] = [];
-
-    saved.forEach((config) => {
-      const preset = presetMap.get(config.providerName);
-      if (preset) {
-        presetMap.set(config.providerName, {
-          ...preset,
-          baseUrl: config.baseUrl,
-          apiKey: config.apiKey,
-        });
-      } else if (config.providerName.trim()) {
-        customConfigs.push({
-          id: config.id || config.providerName,
-          providerName: config.providerName,
-          baseUrl: config.baseUrl,
-          apiKey: config.apiKey,
-          isCustom: true,
-        });
-      }
-    });
-
-    return [...presetMap.values(), ...customConfigs];
+  const normalizeModelIds = useCallback((modelIds: string[]) => {
+    const seen = new Set<string>();
+    return modelIds
+      .map((value) => value.trim())
+      .filter((value) => value)
+      .filter((value) => {
+        if (seen.has(value)) {
+          return false;
+        }
+        seen.add(value);
+        return true;
+      });
   }, []);
+
+  const mergeConfigs = useCallback(
+    (saved: ProviderConfig[]) => {
+      const presetDefaults = createPresetConfigs();
+      const presetMap = new Map(
+        presetDefaults.map((config) => [config.providerName, config])
+      );
+
+      saved.forEach((config) => {
+        const preset = presetMap.get(config.providerName);
+        if (preset) {
+          presetMap.set(config.providerName, {
+            ...preset,
+            baseUrl: config.baseUrl,
+            apiKey: config.apiKey,
+            modelIds: normalizeModelIds(config.modelIds ?? []),
+          });
+        }
+      });
+
+      return [...presetMap.values()];
+    },
+    [normalizeModelIds]
+  );
 
   useEffect(() => {
     if (!open) {
       return;
+    }
+    if (!availableKeys.has(activeKey)) {
+      setActiveKey("providers");
     }
     let active = true;
     setIsLoading(true);
@@ -149,8 +154,9 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           providerName: config.providerName,
           baseUrl: config.baseUrl,
           apiKey: config.apiKey,
+          modelIds: config.modelIds ?? [],
         }));
-        setProviderConfigs((prev) => mergeConfigs(mapped));
+        setProviderConfigs(mergeConfigs(mapped));
       })
       .finally(() => {
         if (active) {
@@ -161,7 +167,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     return () => {
       active = false;
     };
-  }, [mergeConfigs, open]);
+  }, [activeKey, availableKeys, mergeConfigs, open]);
 
   useEffect(() => {
     if (!open) {
@@ -197,11 +203,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     );
   }, [providerConfigs]);
 
-  const handleSaveAll = useCallback(async () => {
-    if (isSaving) {
-      return;
-    }
-    setIsSaving(true);
+  const persistProviders = useCallback(async () => {
     const targets = providerConfigs.filter((config) =>
       config.providerName.trim()
     );
@@ -211,38 +213,39 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           providerName: config.providerName.trim(),
           baseUrl: config.baseUrl.trim(),
           apiKey: config.apiKey.trim(),
+          modelIds: normalizeModelIds(config.modelIds ?? []),
         })
       )
     );
-    setIsSaving(false);
-  }, [isSaving, providerConfigs]);
+  }, [normalizeModelIds, providerConfigs]);
 
-  const handleAddProvider = useCallback(() => {
-    const id = `custom-${Date.now()}`;
-    const next: ProviderConfig = {
-      id,
-      providerName: "",
-      baseUrl: "",
-      apiKey: "",
-      isCustom: true,
-    };
-    setProviderConfigs((prev) => [...prev, next]);
-    setActiveProviderId(id);
-  }, []);
-
-  const handleSaveData = useCallback(async () => {
-    if (isSavingData) {
-      return;
-    }
-    setIsSavingData(true);
+  const persistAppSettings = useCallback(async () => {
     const response = await saveAppSettings({
       defaultSaveDir: defaultSaveDir.trim() || null,
     });
     if (response.ok) {
       setDefaultSaveDir(response.defaultSaveDir ?? "");
     }
+  }, [defaultSaveDir]);
+
+  const handleSaveAll = useCallback(async () => {
+    if (isSaving) {
+      return;
+    }
+    setIsSaving(true);
+    await persistProviders();
+    setIsSaving(false);
+    onProvidersSaved?.();
+  }, [isSaving, onProvidersSaved, persistProviders]);
+
+  const handleSaveData = useCallback(async () => {
+    if (isSavingData) {
+      return;
+    }
+    setIsSavingData(true);
+    await persistAppSettings();
     setIsSavingData(false);
-  }, [defaultSaveDir, isSavingData]);
+  }, [isSavingData, persistAppSettings]);
 
   const handlePickDirectory = useCallback(async () => {
     if (isPickingDir) {
@@ -256,6 +259,33 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
     setIsPickingDir(false);
   }, [isPickingDir]);
+
+  const handleAutoSaveClose = useCallback(() => {
+    if (isSaving || isSavingData) {
+      return;
+    }
+    const run = async () => {
+      setIsSaving(true);
+      setIsSavingData(true);
+      try {
+        await persistProviders();
+        await persistAppSettings();
+        onProvidersSaved?.();
+      } finally {
+        setIsSaving(false);
+        setIsSavingData(false);
+        onClose();
+      }
+    };
+    void run();
+  }, [
+    isSaving,
+    isSavingData,
+    onClose,
+    onProvidersSaved,
+    persistAppSettings,
+    persistProviders,
+  ]);
 
   const activeProvider = useMemo(
     () => providerConfigs.find((config) => config.id === activeProviderId),
@@ -274,7 +304,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           />
         );
       }
-      const label = config.providerName.trim() || "自定义厂商";
+      const label = config.providerName.trim() || "厂商";
       const initial = label.slice(0, 1).toUpperCase() || "?";
       return (
         <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-200 text-xs font-semibold text-slate-600">
@@ -283,11 +313,11 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
       );
     };
 
-    const activeLabel = activeProvider?.providerName.trim() || "自定义厂商";
+    const activeLabel = activeProvider?.providerName.trim() || "厂商";
     const providerMenuItems: MenuProps["items"] = providerConfigs.map(
       (config) => {
         const isActive = config.id === activeProviderId;
-        const label = config.providerName.trim() || "自定义厂商";
+        const label = config.providerName.trim() || "厂商";
         return {
           key: config.id,
           icon: renderProviderIcon(config),
@@ -305,7 +335,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                   isActive ? "text-current opacity-70" : "text-slate-500"
                 }`}
               >
-                {config.isCustom ? "自定义厂商" : "内置厂商"}
+                内置厂商
               </div>
             </div>
           ),
@@ -321,18 +351,10 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
               AI 供应商配置
             </div>
             <div className="text-xs text-slate-500">
-              选择厂商并配置 API Key 与 Base URL
+              选择厂商并配置 API Key、Base URL 与模型型号
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              type="default"
-              onClick={handleAddProvider}
-              icon={<Plus size={16} />}
-              className="rounded-xl"
-            >
-              添加厂商
-            </Button>
             <Button
               type="default"
               onClick={handleSaveAll}
@@ -387,22 +409,13 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                   <div className="text-base font-semibold text-slate-900">
                     {activeLabel}
                   </div>
-                  <Tag color={activeProvider.isCustom ? "cyan" : "blue"}>
-                    {activeProvider.isCustom ? "自定义" : "内置"}
-                  </Tag>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   <div className="space-y-1">
                     <div className="text-xs text-slate-500">模型厂商</div>
                     <Input
                       value={activeProvider.providerName}
-                      onChange={(event) =>
-                        updateConfig(activeProvider.id, {
-                          providerName: event.target.value,
-                        })
-                      }
-                      disabled={!activeProvider.isCustom}
-                      placeholder="输入自定义厂商名称"
+                      disabled
                     />
                   </div>
                   <div className="space-y-1">
@@ -429,6 +442,24 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                       placeholder="填写密钥后会加密存储"
                     />
                   </div>
+                  <div className="space-y-1 md:col-span-2">
+                    <div className="text-xs text-slate-500">模型型号</div>
+                    <Select
+                      mode="tags"
+                      value={activeProvider.modelIds}
+                      onChange={(values) =>
+                        updateConfig(activeProvider.id, {
+                          modelIds: normalizeModelIds(values as string[]),
+                        })
+                      }
+                      tokenSeparators={[",", "，", "\n", "\t", " "]}
+                      placeholder="输入模型型号，回车或逗号分隔"
+                      className="w-full"
+                    />
+                    <div className="text-[11px] text-slate-400">
+                      同型号来自不同厂商时会区分显示
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -439,10 +470,10 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   }, [
     activeProvider,
     activeProviderId,
-    handleAddProvider,
     handleSaveAll,
     isLoading,
     isSaving,
+    normalizeModelIds,
     providerConfigs,
     updateConfig,
   ]);
@@ -519,7 +550,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     <Modal
       title="设置"
       open={open}
-      onCancel={onClose}
+      onCancel={handleAutoSaveClose}
       footer={null}
       centered
       width={980}

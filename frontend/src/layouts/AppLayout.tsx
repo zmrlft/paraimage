@@ -3,15 +3,21 @@ import { Layout } from "antd";
 
 import { generateImage } from "../api/generate";
 import { getChatSessions, saveChatSession } from "../api/history";
+import { getProviderConfigs } from "../api/settings";
 import ChatHistoryModal from "../components/ChatHistoryModal";
 import ChatWindowCard from "../components/ChatWindowCard";
 import ComposerPanel from "../components/ComposerPanel";
 import ImageManagerModal from "../components/ImageManagerModal";
 import Sidebar from "../components/Sidebar";
-import { modelMap, models, type ModelValue } from "../data/models";
+import {
+  buildModelList,
+  buildModelMap,
+  type ModelValue,
+} from "../data/models";
 import type { ChatMessage, ChatSession, ImageReference } from "../types/chat";
 import type { ImageManagerItem } from "../types/image";
 import type { LayoutCount } from "../types/layout";
+import type { ProviderConfig } from "../types/provider";
 
 const layoutGridMap: Record<LayoutCount, string> = {
   1: "grid-cols-1",
@@ -24,7 +30,7 @@ const { Content } = Layout;
 
 type ChatWindowState = {
   id: number;
-  modelId: ModelValue;
+  modelId: ModelValue | null;
   messages: ChatMessage[];
   isGenerating: boolean;
   sessionId: string;
@@ -38,11 +44,14 @@ const createSessionId = () =>
 
 const createWindowState = (index: number): ChatWindowState => ({
   id: index,
-  modelId: models[index % models.length]?.value ?? models[0].value,
+  modelId: null,
   messages: [],
   isGenerating: false,
   sessionId: createSessionId(),
 });
+
+const getNextWindowId = (windows: ChatWindowState[]) =>
+  windows.reduce((max, window) => Math.max(max, window.id), -1) + 1;
 
 const readFileAsDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -51,12 +60,6 @@ const readFileAsDataUrl = (file: File) =>
     reader.onerror = () => reject(new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
-
-const createInitialHistories = () =>
-  models.reduce((acc, model) => {
-    acc[model.value] = [];
-    return acc;
-  }, {} as Record<ModelValue, ChatSession[]>);
 
 const waitForPywebviewReady = (timeoutMs = 1500) =>
   new Promise<boolean>((resolve) => {
@@ -93,12 +96,18 @@ const waitForPywebviewReady = (timeoutMs = 1500) =>
 
 export default function AppLayout() {
   const [layoutCount, setLayoutCount] = useState<LayoutCount>(2);
+  const [providerConfigs, setProviderConfigs] = useState<ProviderConfig[]>([]);
+  const models = useMemo(
+    () => buildModelList(providerConfigs),
+    [providerConfigs]
+  );
+  const modelMap = useMemo(() => buildModelMap(models), [models]);
   const [chatWindows, setChatWindows] = useState<ChatWindowState[]>(() =>
     Array.from({ length: layoutCount }, (_, index) => createWindowState(index))
   );
   const [chatHistories, setChatHistories] = useState<
     Record<ModelValue, ChatSession[]>
-  >(createInitialHistories);
+  >({});
   const [historyModal, setHistoryModal] = useState<{
     open: boolean;
     modelId: ModelValue | null;
@@ -115,18 +124,78 @@ export default function AppLayout() {
 
   const gridClass = layoutGridMap[layoutCount];
 
+  const refreshProviderConfigs = useCallback(async () => {
+    const configs = await getProviderConfigs();
+    setProviderConfigs(
+      configs.map((config) => ({
+        id: config.providerName,
+        providerName: config.providerName,
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        modelIds: config.modelIds ?? [],
+      }))
+    );
+  }, []);
+
+  useEffect(() => {
+    let isActive = true;
+    const loadProviders = async () => {
+      const ready = await waitForPywebviewReady();
+      if (!ready || !isActive) {
+        return;
+      }
+      await refreshProviderConfigs();
+    };
+    loadProviders();
+    return () => {
+      isActive = false;
+    };
+  }, [refreshProviderConfigs]);
+
   useEffect(() => {
     chatWindowsRef.current = chatWindows;
   }, [chatWindows]);
 
   useEffect(() => {
     setChatWindows((prev) => {
-      const next = Array.from({ length: layoutCount }, (_, index) => {
-        return prev[index] ?? createWindowState(index);
-      });
+      if (layoutCount === prev.length) {
+        return prev;
+      }
+      if (layoutCount < prev.length) {
+        return prev.slice(0, layoutCount);
+      }
+      const next = [...prev];
+      let nextId = getNextWindowId(prev);
+      while (next.length < layoutCount) {
+        next.push(createWindowState(nextId));
+        nextId += 1;
+      }
       return next;
     });
   }, [layoutCount]);
+
+  useEffect(() => {
+    setChatWindows((prev) =>
+      prev.map((window, index) => {
+        if (window.modelId && modelMap.has(window.modelId)) {
+          return window;
+        }
+        const nextModel = models[index % models.length]?.value ?? null;
+        if (!nextModel) {
+          return window.modelId
+            ? { ...window, modelId: null, isGenerating: false }
+            : window;
+        }
+        return {
+          ...window,
+          modelId: nextModel,
+          messages: [],
+          isGenerating: false,
+          sessionId: createSessionId(),
+        };
+      })
+    );
+  }, [modelMap, models]);
 
   const handleClearChats = useCallback(() => {
     setChatWindows((prev) =>
@@ -157,10 +226,14 @@ export default function AppLayout() {
       if (!window.sessionId || window.messages.length === 0) {
         return;
       }
+      if (!window.modelId) {
+        return;
+      }
+      const modelKey = window.modelId;
       const now = new Date().toISOString();
       const nextSession: ChatSession = {
         id: window.sessionId,
-        modelId: window.modelId,
+        modelId: modelKey,
         title: buildSessionTitle(window.messages),
         messages: window.messages,
         createdAt: now,
@@ -168,8 +241,8 @@ export default function AppLayout() {
       };
 
       setChatHistories((prev) => {
-        const sessions = prev[window.modelId]
-          ? [...prev[window.modelId]]
+        const sessions = prev[modelKey]
+          ? [...prev[modelKey]]
           : [];
         const index = sessions.findIndex(
           (session) => session.id === window.sessionId
@@ -182,7 +255,7 @@ export default function AppLayout() {
           sessions.unshift(nextSession);
         }
         sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        return { ...prev, [window.modelId]: sessions };
+        return { ...prev, [modelKey]: sessions };
       });
 
       saveChatSession(nextSession).catch(() => {
@@ -216,8 +289,76 @@ export default function AppLayout() {
     [recordSession]
   );
 
+  const handleCloseWindow = useCallback(
+    (windowId: number) => {
+      setChatWindows((prev) => {
+        const target = prev.find((window) => window.id === windowId);
+        if (target) {
+          recordSession(target);
+        }
+        if (prev.length <= 1) {
+          return prev.map((window) =>
+            window.id === windowId
+              ? {
+                  ...window,
+                  modelId: null,
+                  messages: [],
+                  isGenerating: false,
+                  sessionId: createSessionId(),
+                }
+              : window
+          );
+        }
+        return prev.filter((window) => window.id !== windowId);
+      });
+
+      setHistoryModal((prev) =>
+        prev.windowId === windowId
+          ? { open: false, modelId: null, windowId: null }
+          : prev
+      );
+      if (historyModal.windowId === windowId) {
+        setSelectedSessionId(null);
+      }
+      setLayoutCount((prevCount) => {
+        if (prevCount <= 1) {
+          return prevCount;
+        }
+        return (prevCount - 1) as LayoutCount;
+      });
+    },
+    [historyModal.windowId, recordSession]
+  );
+
+  const handleFocusModel = useCallback(
+    (modelId: ModelValue) => {
+      const snapshot = chatWindowsRef.current;
+      snapshot.forEach((window) => {
+        if (window.messages.length > 0) {
+          recordSession(window);
+        }
+      });
+
+      setChatWindows((prev) => {
+        const existing = prev.find((window) => window.modelId === modelId);
+        if (existing) {
+          return [existing];
+        }
+        const nextId = getNextWindowId(prev);
+        return [{ ...createWindowState(nextId), modelId }];
+      });
+      setHistoryModal({ open: false, modelId: null, windowId: null });
+      setSelectedSessionId(null);
+      setLayoutCount(1);
+    },
+    [recordSession]
+  );
+
   const handleSend = useCallback(
     async ({ prompt, files }: { prompt: string; files: File[] }) => {
+      if (models.length === 0) {
+        return;
+      }
       const references: ImageReference[] = await Promise.all(
         files.map(async (file) => ({
           name: file.name,
@@ -234,13 +375,18 @@ export default function AppLayout() {
       };
 
       const windowsSnapshot = chatWindowsRef.current;
+      const eligibleIds = new Set(
+        windowsSnapshot
+          .filter((window) => window.modelId && modelMap.has(window.modelId))
+          .map((window) => window.id)
+      );
       const nextWindows = windowsSnapshot.map((window) => {
         const sessionId = window.sessionId || createSessionId();
         const nextWindow = {
           ...window,
           sessionId,
           messages: [...window.messages, userMessage],
-          isGenerating: true,
+          isGenerating: eligibleIds.has(window.id),
         };
         recordSession(nextWindow);
         return nextWindow;
@@ -249,11 +395,17 @@ export default function AppLayout() {
 
       await Promise.allSettled(
         windowsSnapshot.map(async (window) => {
+          if (!eligibleIds.has(window.id) || !window.modelId) {
+            return;
+          }
           try {
             const modelMeta = modelMap.get(window.modelId);
+            if (!modelMeta) {
+              return;
+            }
             const response = await generateImage({
-              modelId: window.modelId,
-              providerName: modelMeta?.provider,
+              modelId: modelMeta.modelId,
+              providerName: modelMeta.providerName,
               prompt,
               references,
             });
@@ -319,7 +471,103 @@ export default function AppLayout() {
         })
       );
     },
-    [recordSession]
+    [modelMap, models.length, recordSession]
+  );
+
+  const handleRetryMessage = useCallback(
+    async (payload: { windowId: number; message: ChatMessage }) => {
+      const { windowId, message } = payload;
+      const prompt = message.prompt?.trim() ?? "";
+      const references = message.references ?? [];
+      if (!prompt && references.length === 0) {
+        return;
+      }
+
+      const windowSnapshot = chatWindowsRef.current.find(
+        (window) => window.id === windowId
+      );
+      if (!windowSnapshot || !windowSnapshot.modelId) {
+        return;
+      }
+      if (windowSnapshot.isGenerating) {
+        return;
+      }
+      const modelMeta = modelMap.get(windowSnapshot.modelId);
+      if (!modelMeta) {
+        return;
+      }
+
+      setChatWindows((prev) =>
+        prev.map((window) =>
+          window.id === windowId ? { ...window, isGenerating: true } : window
+        )
+      );
+
+      try {
+        const response = await generateImage({
+          modelId: modelMeta.modelId,
+          providerName: modelMeta.providerName,
+          prompt,
+          references,
+        });
+
+        setChatWindows((prev) =>
+          prev.map((window) => {
+            if (window.id !== windowId) {
+              return window;
+            }
+            const assistantMessage: ChatMessage = response.ok
+              ? {
+                  id: createId(),
+                  role: "assistant",
+                  modelId: window.modelId,
+                  imageUrl: response.imageUrl,
+                  createdAt: new Date().toISOString(),
+                }
+              : {
+                  id: createId(),
+                  role: "assistant",
+                  modelId: window.modelId,
+                  error: response.error || "生成失败",
+                  createdAt: new Date().toISOString(),
+                };
+            const nextWindow = {
+              ...window,
+              messages: [...window.messages, assistantMessage],
+              isGenerating: false,
+            };
+            recordSession(nextWindow);
+            return nextWindow;
+          })
+        );
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : "生成失败";
+        setChatWindows((prev) =>
+          prev.map((window) => {
+            if (window.id !== windowId) {
+              return window;
+            }
+            const nextWindow = {
+              ...window,
+              messages: [
+                ...window.messages,
+                {
+                  id: createId(),
+                  role: "assistant",
+                  modelId: window.modelId,
+                  error: messageText,
+                  createdAt: new Date().toISOString(),
+                },
+              ],
+              isGenerating: false,
+            };
+            recordSession(nextWindow);
+            return nextWindow;
+          })
+        );
+      }
+    },
+    [modelMap, recordSession]
   );
 
   const isSending = useMemo(
@@ -348,6 +596,10 @@ export default function AppLayout() {
   useEffect(() => {
     let isActive = true;
     const loadHistories = async () => {
+      if (models.length === 0) {
+        setChatHistories({});
+        return;
+      }
       const ready = await waitForPywebviewReady();
       if (!ready || !isActive) {
         return;
@@ -373,10 +625,13 @@ export default function AppLayout() {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [models]);
 
   const handleOpenHistory = useCallback(
-    (windowId: number, modelId: ModelValue) => {
+    (windowId: number, modelId: ModelValue | null) => {
+      if (!modelId) {
+        return;
+      }
       const sessions = chatHistories[modelId] ?? [];
       setHistoryModal({ open: true, modelId, windowId });
       setSelectedSessionId(sessions[0]?.id ?? null);
@@ -418,6 +673,11 @@ export default function AppLayout() {
     []
   );
 
+  const handleOpenImageManagerFromSidebar = useCallback(() => {
+    const firstId = sourceImages[0]?.id ?? null;
+    setImageManager({ open: true, activeId: firstId });
+  }, [sourceImages]);
+
   const handleCloseImageManager = useCallback(() => {
     setImageManager({ open: false, activeId: null });
   }, []);
@@ -456,7 +716,14 @@ export default function AppLayout() {
         style={{ background: "transparent" }}
         className="h-full w-full gap-4 bg-transparent"
       >
-        <Sidebar layoutCount={layoutCount} onLayoutChange={setLayoutCount} />
+        <Sidebar
+          layoutCount={layoutCount}
+          onLayoutChange={setLayoutCount}
+          models={models}
+          onProvidersSaved={refreshProviderConfigs}
+          onModelSelect={handleFocusModel}
+          onOpenImageManager={handleOpenImageManagerFromSidebar}
+        />
 
         <Content className="flex min-h-0 flex-1">
           <main className="flex min-h-0 flex-1 flex-col gap-4">
@@ -469,6 +736,8 @@ export default function AppLayout() {
                     key={window.id}
                     windowId={window.id}
                     model={window.modelId}
+                    models={models}
+                    modelMap={modelMap}
                     onModelChange={(value) =>
                       handleModelChange(window.id, value)
                     }
@@ -478,6 +747,9 @@ export default function AppLayout() {
                       handleOpenHistory(window.id, window.modelId)
                     }
                     onImageClick={handleOpenImageManager}
+                    onClose={() => handleCloseWindow(window.id)}
+                    canClose={chatWindows.length > 1}
+                    onRetryMessage={handleRetryMessage}
                   />
                 ))}
               </div>
@@ -494,6 +766,7 @@ export default function AppLayout() {
       <ChatHistoryModal
         open={historyModal.open}
         modelId={historyModal.modelId}
+        modelMap={modelMap}
         sessions={
           historyModal.modelId ? chatHistories[historyModal.modelId] ?? [] : []
         }
@@ -507,6 +780,7 @@ export default function AppLayout() {
         open={imageManager.open}
         images={sourceImages}
         initialActiveId={imageManager.activeId}
+        modelMap={modelMap}
         onClose={handleCloseImageManager}
       />
     </div>

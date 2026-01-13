@@ -2,6 +2,7 @@ export type ProviderConfigPayload = {
   providerName: string;
   baseUrl: string;
   apiKey: string;
+  modelIds: string[];
 };
 
 export type SaveConfigResponse = {
@@ -10,21 +11,28 @@ export type SaveConfigResponse = {
     provider_name: string;
     api_key: string;
     base_url: string;
+    model_ids?: string[];
     updated_at: string;
   };
   error?: string;
 };
 
 type PyWebviewSettingsApi = {
-  get_configs: () => Promise<
+  get_configs?: () => Promise<
     Array<{
       provider_name: string;
       api_key: string;
       base_url: string;
+      model_ids?: string[];
       updated_at: string;
     }>
   >;
-  save_config: (provider: string, key: string, url: string) => Promise<SaveConfigResponse>;
+  save_config?: (
+    provider: string,
+    key: string,
+    url: string,
+    model_ids: string[]
+  ) => Promise<SaveConfigResponse>;
 };
 
 const getPywebviewApi = (): PyWebviewSettingsApi | null => {
@@ -33,7 +41,7 @@ const getPywebviewApi = (): PyWebviewSettingsApi | null => {
   }
   const api = (window as unknown as { pywebview?: { api?: PyWebviewSettingsApi } })
     .pywebview?.api;
-  return api?.get_configs && api?.save_config ? api : null;
+  return api ?? null;
 };
 
 export const getProviderConfigs = async (): Promise<ProviderConfigPayload[]> => {
@@ -41,12 +49,16 @@ export const getProviderConfigs = async (): Promise<ProviderConfigPayload[]> => 
   if (!api) {
     return [];
   }
-  const configs = await api.get_configs();
-  return configs.map((config) => ({
-    providerName: config.provider_name,
-    baseUrl: config.base_url,
-    apiKey: config.api_key,
-  }));
+  if (api.get_configs) {
+    const configs = await api.get_configs();
+    return configs.map((config) => ({
+      providerName: config.provider_name,
+      baseUrl: config.base_url,
+      apiKey: config.api_key,
+      modelIds: config.model_ids ?? [],
+    }));
+  }
+  return [];
 };
 
 export const saveProviderConfig = async (
@@ -56,5 +68,13 @@ export const saveProviderConfig = async (
   if (!api) {
     return { ok: false, error: "pywebview not available" };
   }
-  return api.save_config(payload.providerName, payload.apiKey, payload.baseUrl);
+  if (api.save_config) {
+    return api.save_config(
+      payload.providerName,
+      payload.apiKey,
+      payload.baseUrl,
+      payload.modelIds
+    );
+  }
+  return { ok: false, error: "pywebview not available" };
 };

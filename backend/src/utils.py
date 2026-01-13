@@ -9,12 +9,21 @@ from schemas import ImageReference
 DEFAULT_SEEDREAM_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
+DEFAULT_AIHUBMIX_BASE_URL = "https://aihubmix.com/v1"
 
 SEEDREAM_PROVIDER_HINTS = ("seedream", "seededit", "doubao", "volc", "bytedance", "ark")
 OPENAI_PROVIDER_HINTS = ("openai",)
 GEMINI_PROVIDER_HINTS = ("gemini", "google")
 DASHSCOPE_PROVIDER_HINTS = ("qwen", "dashscope", "aliyun", "alibaba")
+AIHUBMIX_PROVIDER_HINTS = ("aihubmix",)
+VOLCENGINE_PROVIDER_HINTS = ("volcengine", "volc", "ark", "doubao", "bytedance")
+VOLCENGINE_MODEL_ALIASES = {
+    "doubao-seedream-4.0": "doubao-seedream-4-0-250828",
+    "doubao-seedream-4-0": "doubao-seedream-4-0-250828",
+    "doubao-seedream-4.5": "doubao-seedream-4-5-251128",
+    "doubao-seedream-4-5": "doubao-seedream-4-5-251128",
+}
 
 
 
@@ -145,12 +154,33 @@ def is_seedream_provider(provider: str, base_url: str, model_id: str) -> bool:
     return any(token in lowered_provider for token in SEEDREAM_PROVIDER_HINTS)
 
 
+def is_aihubmix_provider(provider: str, base_url: str) -> bool:
+    lowered_provider = (provider or "").lower()
+    lowered_base = (base_url or "").lower()
+    if any(token in lowered_provider for token in AIHUBMIX_PROVIDER_HINTS):
+        return True
+    return "aihubmix.com" in lowered_base
+
+
+def is_dashscope_provider(provider: str, base_url: str, model_id: str) -> bool:
+    lowered_provider = (provider or "").lower()
+    lowered_base = (base_url or "").lower()
+    lowered_model = (model_id or "").lower()
+    if "dashscope" in lowered_base or "aliyuncs.com" in lowered_base:
+        return True
+    if "qwen" in lowered_model:
+        return True
+    return any(token in lowered_provider for token in DASHSCOPE_PROVIDER_HINTS)
+
+
 def resolve_default_base_url(provider: str, model_id: str) -> str | None:
     lowered_provider = (provider or "").lower()
     lowered_model = (model_id or "").lower()
 
     if is_seedream_provider(provider, "", model_id):
         return DEFAULT_SEEDREAM_BASE_URL
+    if any(token in lowered_provider for token in AIHUBMIX_PROVIDER_HINTS):
+        return DEFAULT_AIHUBMIX_BASE_URL
     if any(token in lowered_provider for token in GEMINI_PROVIDER_HINTS) or "nano-banana" in lowered_model:
         return DEFAULT_GEMINI_BASE_URL
     if any(token in lowered_provider for token in DASHSCOPE_PROVIDER_HINTS) or "qwen" in lowered_model:
@@ -165,6 +195,8 @@ def resolve_provider_name(model_id: str) -> str | None:
     lowered_model = (model_id or "").lower()
     if is_seedream_provider("", "", model_id):
         return "Volcengine Ark"
+    if lowered_model == "gemini-3-pro-image-preview":
+        return "AIHubMix"
     if "nano-banana" in lowered_model:
         return "Google Gemini"
     if "qwen" in lowered_model:
@@ -174,34 +206,19 @@ def resolve_provider_name(model_id: str) -> str | None:
     return None
 
 
-def resolve_provider_name_with_custom(model_id: str) -> tuple[str | None, bool]:
-    """
-    Resolve provider name with custom provider priority.
-    
-    Returns:
-        tuple: (provider_name, is_custom_provider)
-        If custom provider is found that supports this model, is_custom_provider is True.
-        If built-in provider is found, is_custom_provider is False.
-        If no provider found, returns (None, False).
-    """
-    # Import here to avoid circular imports
-    from storage import find_custom_provider_by_model
-
-    # Check custom providers first (priority)
-    custom = find_custom_provider_by_model(model_id)
-    if custom:
-        return custom.provider_name, True
-
-    # Fall back to built-in provider detection
-    provider = resolve_provider_name(model_id)
-    return provider, False
-
-
-
 def resolve_provider_model_id(provider_name: str, model_id: str) -> str:
     lowered_provider = (provider_name or "").lower()
     lowered_model = (model_id or "").lower()
+    if any(token in lowered_provider for token in VOLCENGINE_PROVIDER_HINTS):
+        mapped = VOLCENGINE_MODEL_ALIASES.get(lowered_model)
+        if mapped:
+            return mapped
     if "gemini" in lowered_provider:
+        if lowered_model == "nano-banana":
+            return "gemini-2.5-flash-image"
+        if lowered_model == "nano-banana-pro":
+            return "gemini-3-pro-image-preview"
+    if any(token in lowered_provider for token in AIHUBMIX_PROVIDER_HINTS):
         if lowered_model == "nano-banana":
             return "gemini-2.5-flash-image"
         if lowered_model == "nano-banana-pro":
@@ -225,24 +242,6 @@ def debug_log(message: str, payload: dict[str, Any] | None = None) -> None:
         print(f"[omniimage] {message} | {payload}")
     else:
         print(f"[omniimage] {message}")
-
-
-def get_provider_settings(provider_name: str) -> Any | None:
-    """
-    Get provider settings (custom or built-in).
-    First checks custom providers, then built-in providers.
-    """
-    # Import here to avoid circular imports
-    from storage import get_custom_provider, get_settings
-
-    # Check custom provider first
-    custom = get_custom_provider(provider_name)
-    if custom and custom.get_is_enabled():
-        return custom
-
-    # Fall back to built-in provider
-    return get_settings(provider_name)
-
 
 
 def extract_image_from_response(

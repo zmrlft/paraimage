@@ -35,6 +35,39 @@ const getPywebviewApi = (): PyWebviewPromptApi | null => {
   return api?.get_prompt_library && api?.save_prompt_library ? api : null;
 };
 
+const waitForPywebviewApi = (
+  timeoutMs = 1500
+): Promise<PyWebviewPromptApi | null> => {
+  if (typeof window === "undefined") {
+    return Promise.resolve(null);
+  }
+  const api = getPywebviewApi();
+  if (api) {
+    return Promise.resolve(api);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const handleReady = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timer);
+      window.removeEventListener("pywebviewready", handleReady);
+      resolve(getPywebviewApi());
+    };
+    const timer = window.setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.removeEventListener("pywebviewready", handleReady);
+      resolve(getPywebviewApi());
+    }, timeoutMs);
+    window.addEventListener("pywebviewready", handleReady);
+  });
+};
+
 const readLocalPrompts = (): PromptItem[] => {
   if (typeof window === "undefined") {
     return [];
@@ -60,21 +93,25 @@ const writeLocalPrompts = (prompts: PromptItem[]) => {
 };
 
 export const getPromptLibrary = async (): Promise<PromptItem[]> => {
-  const api = getPywebviewApi();
+  const api = await waitForPywebviewApi();
   if (!api) {
     return readLocalPrompts();
   }
   const response = await api.get_prompt_library();
-  return Array.isArray(response?.prompts) ? response.prompts : [];
+  const prompts = Array.isArray(response?.prompts) ? response.prompts : [];
+  writeLocalPrompts(prompts);
+  return prompts;
 };
 
 export const savePromptLibrary = async (
   prompts: PromptItem[]
 ): Promise<SavePromptLibraryResponse> => {
-  const api = getPywebviewApi();
+  const api = await waitForPywebviewApi();
   if (!api) {
     writeLocalPrompts(prompts);
     return { ok: true, prompts };
   }
-  return api.save_prompt_library({ prompts });
+  const response = await api.save_prompt_library({ prompts });
+  writeLocalPrompts(prompts);
+  return response;
 };

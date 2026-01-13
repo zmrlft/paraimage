@@ -20,17 +20,7 @@ class Settings(BaseModel):
     provider_name = CharField(unique=True)
     api_key = CharField()
     base_url = CharField()
-    updated_at = DateTimeField(default=datetime.utcnow)
-
-
-class CustomProvider(BaseModel):
-    """Custom provider configuration with model mappings"""
-
-    provider_name = CharField(unique=True)
-    api_key = CharField()
-    base_url = CharField(default="")
-    model_ids = CharField(default="[]")  # JSON array of model IDs
-    is_enabled = CharField(default="true")  # JSON boolean string
+    model_ids = TextField(default="[]")
     updated_at = DateTimeField(default=datetime.utcnow)
 
     def get_model_ids(self) -> list[str]:
@@ -43,17 +33,6 @@ class CustomProvider(BaseModel):
     def set_model_ids(self, model_ids: list[str]) -> None:
         """Store model_ids as JSON string"""
         self.model_ids = json.dumps(model_ids)
-
-    def get_is_enabled(self) -> bool:
-        """Parse is_enabled JSON boolean string"""
-        try:
-            return json.loads(self.is_enabled) if self.is_enabled else True
-        except (json.JSONDecodeError, TypeError):
-            return True
-
-    def set_is_enabled(self, enabled: bool) -> None:
-        """Store is_enabled as JSON boolean string"""
-        self.is_enabled = json.dumps(enabled)
 
 
 class ChatSession(BaseModel):
@@ -87,8 +66,10 @@ def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     database.connect(reuse_if_open=True)
     database.create_tables(
-        [Settings, CustomProvider, ChatSession, AppSetting], safe=True
+        [Settings, ChatSession, AppSetting], safe=True
     )
+    _ensure_settings_model_ids_column()
+    _migrate_legacy_custom_providers()
 
 
 def ensure_db() -> None:
@@ -101,12 +82,19 @@ def list_settings() -> list[Settings]:
     return list(Settings.select().order_by(Settings.updated_at.desc()))
 
 
-def save_settings(provider_name: str, api_key: str, base_url: str) -> Settings:
+def save_settings(
+    provider_name: str,
+    api_key: str,
+    base_url: str,
+    model_ids: list[str] | None = None,
+) -> Settings:
     ensure_db()
     existing = Settings.get_or_none(Settings.provider_name == provider_name)
     if existing:
         existing.api_key = api_key
         existing.base_url = base_url
+        if model_ids is not None:
+            existing.set_model_ids(model_ids)
         existing.updated_at = datetime.utcnow()
         existing.save()
         return existing
@@ -114,6 +102,7 @@ def save_settings(provider_name: str, api_key: str, base_url: str) -> Settings:
         provider_name=provider_name,
         api_key=api_key,
         base_url=base_url,
+        model_ids=json.dumps(model_ids or []),
         updated_at=datetime.utcnow(),
     )
 
@@ -123,70 +112,77 @@ def get_settings(provider_name: str) -> Settings | None:
     return Settings.get_or_none(Settings.provider_name == provider_name)
 
 
-def add_custom_provider(
-    provider_name: str, api_key: str, base_url: str, model_ids: list[str]
-) -> CustomProvider:
-    """Add or update a custom provider with its model IDs"""
-    ensure_db()
-    existing = CustomProvider.get_or_none(
-        CustomProvider.provider_name == provider_name
-    )
-    if existing:
-        existing.api_key = api_key
-        existing.base_url = base_url
-        existing.set_model_ids(model_ids)
-        existing.updated_at = datetime.utcnow()
-        existing.save()
-        return existing
-    return CustomProvider.create(
-        provider_name=provider_name,
-        api_key=api_key,
-        base_url=base_url,
-        model_ids=json.dumps(model_ids),
-        is_enabled="true",
-        updated_at=datetime.utcnow(),
+def _ensure_settings_model_ids_column() -> None:
+    cursor = database.execute_sql("PRAGMA table_info(settings)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "model_ids" in columns:
+        return
+    database.execute_sql(
+        "ALTER TABLE settings ADD COLUMN model_ids TEXT DEFAULT '[]'"
     )
 
 
-def get_custom_provider(provider_name: str) -> CustomProvider | None:
-    """Get custom provider by name"""
-    ensure_db()
-    return CustomProvider.get_or_none(
-        CustomProvider.provider_name == provider_name
+def _table_exists(table_name: str) -> bool:
+    cursor = database.execute_sql(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
     )
+    return cursor.fetchone() is not None
 
 
-def list_custom_providers() -> list[CustomProvider]:
-    """List all custom providers ordered by update time"""
-    ensure_db()
-    return list(CustomProvider.select().order_by(CustomProvider.updated_at.desc()))
+def _migrate_legacy_custom_providers() -> None:
+    legacy_table = None
+    for candidate in ("customprovider", "custom_provider"):
+        if _table_exists(candidate):
+            legacy_table = candidate
+            break
+    if not legacy_table:
+        return
+    try:
+        cursor = database.execute_sql(
+            f"SELECT provider_name, api_key, base_url, model_ids FROM {legacy_table}"
+        )
+    except Exception:
+        return
 
+    rows = cursor.fetchall()
+    if not rows:
+        return
 
-def delete_custom_provider(provider_name: str) -> bool:
-    """Delete a custom provider"""
-    ensure_db()
-    custom = CustomProvider.get_or_none(
-        CustomProvider.provider_name == provider_name
-    )
-    if custom:
-        custom.delete_instance()
-        return True
-    return False
+    for provider_name, api_key, base_url, model_ids in rows:
+        if not provider_name:
+            continue
+        try:
+            parsed_model_ids = (
+                json.loads(model_ids) if model_ids else []
+            )
+        except (json.JSONDecodeError, TypeError):
+            parsed_model_ids = []
 
+        existing = Settings.get_or_none(Settings.provider_name == provider_name)
+        if existing:
+            updated = False
+            if api_key and not existing.api_key:
+                existing.api_key = api_key
+                updated = True
+            if base_url and not existing.base_url:
+                existing.base_url = base_url
+                updated = True
+            if parsed_model_ids and not existing.get_model_ids():
+                existing.set_model_ids(parsed_model_ids)
+                updated = True
+            if updated:
+                existing.updated_at = datetime.utcnow()
+                existing.save()
+            continue
 
-def find_custom_provider_by_model(model_id: str) -> CustomProvider | None:
-    """Find custom provider that supports a specific model"""
-    ensure_db()
-    providers = CustomProvider.select()
-    lowered_model = (model_id or "").lower()
-    for provider in providers:
-        if provider.get_is_enabled():
-            model_ids = provider.get_model_ids()
-            if any(
-                lowered_model == (m or "").lower() for m in model_ids
-            ):
-                return provider
-    return None
+        Settings.create(
+            provider_name=provider_name,
+            api_key=api_key or "",
+            base_url=base_url or "",
+            model_ids=json.dumps(parsed_model_ids),
+            updated_at=datetime.utcnow(),
+        )
 
 
 def list_chat_sessions(model_id: str) -> list[ChatSession]:

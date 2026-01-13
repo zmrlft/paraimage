@@ -7,17 +7,12 @@ from services.generation import generate_batch, generate_single
 from services.image_processing import process_images
 from services.image_saving import choose_save_directory, save_images
 from storage import (
-    CustomProvider,
     ChatSession,
     Settings,
-    add_custom_provider,
-    delete_custom_provider,
-    get_custom_provider,
     get_app_setting,
     get_prompt_library,
     init_db,
     list_chat_sessions,
-    list_custom_providers,
     list_settings,
     save_settings,
     set_prompt_library,
@@ -56,16 +51,7 @@ class ProApi:
             "provider_name": record.provider_name,
             "api_key": record.api_key,
             "base_url": record.base_url,
-            "updated_at": record.updated_at.isoformat(),
-        }
-
-    def _custom_provider_to_dict(self, record: CustomProvider) -> dict[str, Any]:
-        return {
-            "provider_name": record.provider_name,
-            "api_key": record.api_key,
-            "base_url": record.base_url,
             "model_ids": record.get_model_ids(),
-            "is_enabled": record.get_is_enabled(),
             "updated_at": record.updated_at.isoformat(),
         }
 
@@ -79,55 +65,29 @@ class ProApi:
             "updatedAt": record.updated_at.isoformat(),
         }
 
-    def save_config(self, provider: str, key: str, url: str) -> dict[str, Any]:
+    def save_config(
+        self, provider: str, key: str, url: str, model_ids: list[str] | None = None
+    ) -> dict[str, Any]:
         provider_name = (provider or "").strip()
         api_key = (key or "").strip()
         base_url = (url or "").strip()
+        normalized_model_ids = (
+            [m.strip() for m in model_ids if m.strip()]
+            if model_ids is not None
+            else None
+        )
 
         if not provider_name:
             return {"ok": False, "error": "provider is required"}
 
-        record = save_settings(provider_name, api_key, base_url)
+        record = save_settings(
+            provider_name, api_key, base_url, normalized_model_ids
+        )
         return {"ok": True, "config": self._config_to_dict(record)}
 
     def get_configs(self) -> list[dict[str, Any]]:
         records = list_settings()
         return [self._config_to_dict(record) for record in records]
-
-    def add_custom_provider(
-        self, provider: str, key: str, url: str, model_ids: list[str]
-    ) -> dict[str, Any]:
-        """Add or update a custom provider with model IDs"""
-        provider_name = (provider or "").strip()
-        api_key = (key or "").strip()
-        base_url = (url or "").strip()
-        model_ids = [m.strip() for m in (model_ids or []) if m.strip()]
-
-        if not provider_name:
-            return {"ok": False, "error": "provider is required"}
-
-        if not model_ids:
-            return {"ok": False, "error": "at least one model_id is required"}
-
-        record = add_custom_provider(provider_name, api_key, base_url, model_ids)
-        return {"ok": True, "config": self._custom_provider_to_dict(record)}
-
-    def get_custom_providers(self) -> list[dict[str, Any]]:
-        """Get all custom providers"""
-        records = list_custom_providers()
-        return [self._custom_provider_to_dict(record) for record in records]
-
-    def delete_custom_provider(self, provider: str) -> dict[str, Any]:
-        """Delete a custom provider"""
-        provider_name = (provider or "").strip()
-
-        if not provider_name:
-            return {"ok": False, "error": "provider is required"}
-
-        success = delete_custom_provider(provider_name)
-        if success:
-            return {"ok": True, "message": f"Custom provider '{provider_name}' deleted"}
-        return {"ok": False, "error": f"Custom provider '{provider_name}' not found"}
 
     def get_chat_sessions(self, model_id: str) -> list[dict[str, Any]]:
         model_id = (model_id or "").strip()

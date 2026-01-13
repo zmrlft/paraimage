@@ -68,25 +68,3 @@ class SaveImagesRequest(PydanticBaseModel):
 class AppSettingsPayload(PydanticBaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
     default_save_dir: str | None = Field(default=None, alias="defaultSaveDir")
-
-class AddCustomProviderRequest(PydanticBaseModel):
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
-    provider_name: str = Field(alias="providerName")
-    api_key: str = Field(alias="apiKey")
-    base_url: str | None = Field(default=None, alias="baseUrl")
-    model_ids: list[str] = Field(default_factory=list, alias="modelIds")
-
-
-class CustomProviderConfig(PydanticBaseModel):
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
-    provider_name: str = Field(alias="providerName")
-    api_key: str = Field(alias="apiKey")
-    base_url: str = Field(alias="baseUrl")
-    model_ids: list[str] = Field(alias="modelIds")
-    is_enabled: bool = Field(alias="isEnabled")
-    updated_at: str = Field(alias="updatedAt")
-
-
-class DeleteCustomProviderRequest(PydanticBaseModel):
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
-    provider_name: str = Field(alias="providerName")
