@@ -1,5 +1,5 @@
 [project]
-name = "omniimage"
+name = "paraimage"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -14,5 +14,5 @@ dependencies = [
     "pillow>=12.1.0",
     "pydantic>=2.12.5",
     "pywebview>=6.1",
-    "rembg>=2.0.72",
+    "rembg[cpu]>=2.0.72",
 ]

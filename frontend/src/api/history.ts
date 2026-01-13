@@ -16,9 +16,21 @@ type SaveChatSessionResponse = {
   error?: string;
 };
 
+type DeleteChatSessionResponse = {
+  ok: boolean;
+  deleted?: boolean;
+  id?: string;
+  error?: string;
+};
+
 type PyWebviewHistoryApi = {
-  get_chat_sessions: (modelId: string) => Promise<ChatSessionResponse[]>;
-  save_chat_session: (payload: ChatSessionResponse) => Promise<SaveChatSessionResponse>;
+  get_chat_sessions?: (modelId: string) => Promise<ChatSessionResponse[]>;
+  save_chat_session?: (
+    payload: ChatSessionResponse
+  ) => Promise<SaveChatSessionResponse>;
+  delete_chat_session?: (
+    sessionId: string
+  ) => Promise<DeleteChatSessionResponse>;
 };
 
 const getPywebviewApi = (): PyWebviewHistoryApi | null => {
@@ -27,14 +39,14 @@ const getPywebviewApi = (): PyWebviewHistoryApi | null => {
   }
   const api = (window as unknown as { pywebview?: { api?: PyWebviewHistoryApi } })
     .pywebview?.api;
-  return api?.get_chat_sessions && api?.save_chat_session ? api : null;
+  return api ?? null;
 };
 
 export const getChatSessions = async (
   modelId: ModelValue
 ): Promise<ChatSession[]> => {
   const api = getPywebviewApi();
-  if (!api) {
+  if (!api?.get_chat_sessions) {
     return [];
   }
   const sessions = await api.get_chat_sessions(modelId);
@@ -52,7 +64,7 @@ export const saveChatSession = async (
   session: ChatSession
 ): Promise<SaveChatSessionResponse> => {
   const api = getPywebviewApi();
-  if (!api) {
+  if (!api?.save_chat_session) {
     return { ok: false, error: "pywebview not available" };
   }
   return api.save_chat_session({
@@ -63,4 +75,14 @@ export const saveChatSession = async (
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   });
+};
+
+export const deleteChatSession = async (
+  sessionId: string
+): Promise<DeleteChatSessionResponse> => {
+  const api = getPywebviewApi();
+  if (!api?.delete_chat_session) {
+    return { ok: false, error: "pywebview not available" };
+  }
+  return api.delete_chat_session(sessionId);
 };

@@ -3,7 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
-  type MouseEvent,
+  type MouseEvent as ReactMouseEvent,
   type WheelEvent,
 } from "react";
 import { Modal } from "antd";
@@ -24,26 +24,39 @@ export default function ImagePreviewModal({
   title,
   onClose,
 }: ImagePreviewModalProps) {
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width={960}
+      centered
+      styles={{ body: { padding: 12 } }}
+      title={title || "预览"}
+    >
+      {open && (
+        <ImagePreviewContent key={imageUrl} imageUrl={imageUrl} title={title} />
+      )}
+    </Modal>
+  );
+}
+
+type ImagePreviewContentProps = {
+  imageUrl: string;
+  title?: string;
+};
+
+function ImagePreviewContent({ imageUrl, title }: ImagePreviewContentProps) {
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const dragAnchor = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
-    setScale(1);
-    setOffset({ x: 0, y: 0 });
-    setIsDragging(false);
-    dragAnchor.current = null;
-  }, [imageUrl, open]);
-
-  useEffect(() => {
     if (!isDragging) {
       return;
     }
-    const handleMove = (event: MouseEvent) => {
+    const handleMove = (event: globalThis.MouseEvent) => {
       if (!dragAnchor.current) {
         return;
       }
@@ -77,7 +90,7 @@ export default function ImagePreviewModal({
   }, []);
 
   const handleMouseDown = useCallback(
-    (event: MouseEvent<HTMLImageElement>) => {
+    (event: ReactMouseEvent<HTMLImageElement>) => {
       if (event.button !== 0) {
         return;
       }
@@ -91,34 +104,24 @@ export default function ImagePreviewModal({
   );
 
   return (
-    <Modal
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      width={960}
-      centered
-      styles={{ body: { padding: 12 } }}
-      title={title || "预览"}
+    <div
+      onWheel={handleWheel}
+      className="flex h-[70vh] w-full items-center justify-center overflow-hidden rounded-xl bg-slate-900/5"
     >
-      <div
-        onWheel={handleWheel}
-        className="flex h-[70vh] w-full items-center justify-center overflow-hidden rounded-xl bg-slate-900/5"
-      >
-        {imageUrl && (
-          <img
-            src={imageUrl}
-            alt={title || "预览"}
-            onMouseDown={handleMouseDown}
-            className="select-none"
-            style={{
-              transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-              cursor: isDragging ? "grabbing" : "grab",
-              userSelect: "none",
-            }}
-            draggable={false}
-          />
-        )}
-      </div>
-    </Modal>
+      {imageUrl && (
+        <img
+          src={imageUrl}
+          alt={title || "预览"}
+          onMouseDown={handleMouseDown}
+          className="select-none"
+          style={{
+            transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+            cursor: isDragging ? "grabbing" : "grab",
+            userSelect: "none",
+          }}
+          draggable={false}
+        />
+      )}
+    </div>
   );
 }

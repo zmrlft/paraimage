@@ -239,9 +239,9 @@ def debug_log(message: str, payload: dict[str, Any] | None = None) -> None:
     if os.getenv("DEBUG") != "true":
         return
     if payload:
-        print(f"[omniimage] {message} | {payload}")
+        print(f"[paraimage] {message} | {payload}")
     else:
-        print(f"[omniimage] {message}")
+        print(f"[paraimage] {message}")
 
 
 def extract_image_from_response(

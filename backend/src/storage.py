@@ -9,7 +9,7 @@ from uuid import uuid4
 from peewee import CharField, DateTimeField, Model, SqliteDatabase, TextField
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-DB_PATH = DATA_DIR / "omniimage.db"
+DB_PATH = DATA_DIR / "paraimage.db"
 database = SqliteDatabase(DB_PATH)
 
 
@@ -62,7 +62,23 @@ class AppSetting(BaseModel):
 
 
 PROMPT_LIBRARY_KEY = "prompt_library"
-PROMPT_LIBRARY_PATH_ENV = "OMNIIMAGE_PROMPT_LIBRARY_PATH"
+PROMPT_LIBRARY_PATH_ENV = "PARAIMAGE_PROMPT_LIBRARY_PATH"
+
+
+def _migrate_legacy_db_path() -> None:
+    if DB_PATH.exists():
+        return
+    candidates = [
+        path for path in DATA_DIR.glob("*.db") if path.name != DB_PATH.name
+    ]
+    if len(candidates) != 1:
+        return
+    legacy_path = candidates[0]
+    try:
+        legacy_path.replace(DB_PATH)
+    except Exception:
+        # Best-effort migration; keep legacy path if rename fails.
+        pass
 
 
 def _build_prompt_title(content: str) -> str:
@@ -176,6 +192,7 @@ def _seed_prompt_library() -> None:
 
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_db_path()
     database.connect(reuse_if_open=True)
     database.create_tables(
         [Settings, ChatSession, AppSetting], safe=True
@@ -305,6 +322,18 @@ def list_chat_sessions(model_id: str) -> list[ChatSession]:
         .where(ChatSession.model_id == model_id)
         .order_by(ChatSession.updated_at.desc())
     )
+
+
+def delete_chat_session(session_id: str) -> bool:
+    ensure_db()
+    if not session_id:
+        return False
+    deleted = (
+        ChatSession.delete()
+        .where(ChatSession.session_id == session_id)
+        .execute()
+    )
+    return deleted > 0
 
 
 def upsert_chat_session(

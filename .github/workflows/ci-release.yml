@@ -1,0 +1,89 @@
+name: ci-release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Configure toolcache for act
+        if: env.ACT
+        shell: bash
+        run: echo "RUNNER_TOOL_CACHE=$GITHUB_WORKSPACE/.toolcache/${{ matrix.os }}" >> "$GITHUB_ENV"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install backend deps
+        working-directory: backend
+        shell: bash
+        run: |
+          if [[ -n "${ACT:-}" ]]; then
+            rm -rf .venv
+          fi
+          uv venv .venv
+          uv sync --frozen
+          uv pip install pyinstaller
+
+      - name: Build package
+        run: uv run --project backend python scripts/build_package.py
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            tar -a -c -f artifacts/ParaImage-windows.zip -C dist ParaImage
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            ditto -c -k --sequesterRsrc --keepParent "dist/ParaImage.app" "artifacts/ParaImage-macos.zip"
+          else
+            tar -czf artifacts/ParaImage-linux.tar.gz -C dist ParaImage
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ParaImage-${{ runner.os }}
+          path: artifacts/*
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: artifacts/*

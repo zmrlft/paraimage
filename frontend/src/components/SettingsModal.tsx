@@ -31,11 +31,11 @@ const createPresetConfigs = (): ProviderConfig[] => {
   }));
 };
 
-const settingsMenuItems: MenuProps["items"] = [
+const settingsMenuItems = [
   { key: "providers", label: "AI 供应商配置" },
   { key: "data", label: "数据与隐私" },
   { key: "experiments", label: "实验功能" },
-];
+] satisfies NonNullable<MenuProps["items"]>;
 
 const placeholderMap: Record<string, { title: string; tips: string[] }> = {
   defaults: {

@@ -17,13 +17,13 @@ type SavePromptLibraryResponse = {
 };
 
 type PyWebviewPromptApi = {
-  get_prompt_library: () => Promise<PromptLibraryResponse>;
-  save_prompt_library: (
+  get_prompt_library?: () => Promise<PromptLibraryResponse>;
+  save_prompt_library?: (
     payload: PromptLibraryResponse
   ) => Promise<SavePromptLibraryResponse>;
 };
 
-const STORAGE_KEY = "omniimage.prompt_library";
+const STORAGE_KEY = "paraimage.prompt_library";
 
 const getPywebviewApi = (): PyWebviewPromptApi | null => {
   if (typeof window === "undefined") {
@@ -32,7 +32,7 @@ const getPywebviewApi = (): PyWebviewPromptApi | null => {
   const api = (
     window as unknown as { pywebview?: { api?: PyWebviewPromptApi } }
   ).pywebview?.api;
-  return api?.get_prompt_library && api?.save_prompt_library ? api : null;
+  return api ?? null;
 };
 
 const waitForPywebviewApi = (
@@ -94,7 +94,7 @@ const writeLocalPrompts = (prompts: PromptItem[]) => {
 
 export const getPromptLibrary = async (): Promise<PromptItem[]> => {
   const api = await waitForPywebviewApi();
-  if (!api) {
+  if (!api?.get_prompt_library) {
     return readLocalPrompts();
   }
   const response = await api.get_prompt_library();
@@ -107,7 +107,7 @@ export const savePromptLibrary = async (
   prompts: PromptItem[]
 ): Promise<SavePromptLibraryResponse> => {
   const api = await waitForPywebviewApi();
-  if (!api) {
+  if (!api?.save_prompt_library) {
     writeLocalPrompts(prompts);
     return { ok: true, prompts };
   }

@@ -88,7 +88,7 @@ export const buildModelList = (
       const isNanoBanana =
         providerName === "AIHubMix" &&
         normalizedModelId.startsWith("nano-banana");
-      const iconSlug = isNanoBanana ? "/banana.png" : providerIconSlug;
+      const iconSlug = isNanoBanana ? "/banana.svg" : providerIconSlug;
       const key = buildModelKey(providerName, trimmed);
       if (seen.has(key)) {
         return;

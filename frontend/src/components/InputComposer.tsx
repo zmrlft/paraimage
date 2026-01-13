@@ -12,17 +12,18 @@ import type { UploadFile, UploadProps } from "antd";
 import { BookOpen, Copy, ImagePlus, Send, Trash2 } from "lucide-react";
 
 import PromptLibraryModal from "./PromptLibraryModal";
+
 import "./InputComposer.css";
 
 const { TextArea } = Input;
-
-const isImageFile = (file: File) => file.type.startsWith("image/");
 
 type InputComposerProps = {
   onSend?: (payload: { prompt: string; files: File[] }) => Promise<void> | void;
   onClearChats?: () => void;
   sending?: boolean;
 };
+
+const isImageFile = (file: File) => file.type.startsWith("image/");
 
 export default function InputComposer({
   onSend,
@@ -32,8 +33,7 @@ export default function InputComposer({
   const [message, setMessage] = useState("");
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
+  const [isPromptLibraryOpen, setIsPromptLibraryOpen] = useState(false);
   const objectUrlMap = useRef(new Map<string, string>());
 
   const dropzoneClasses = useMemo(() => {
@@ -58,7 +58,7 @@ export default function InputComposer({
   }, []);
 
   const appendFiles = useCallback((files: File[]) => {
-    const nextItems = files.filter(isImageFile).map((file) => {
+    const nextItems: UploadFile[] = files.filter(isImageFile).map((file) => {
       const uid = `${file.name}-${file.size}-${
         file.lastModified
       }-${Math.random().toString(36).slice(2)}`;
@@ -68,7 +68,7 @@ export default function InputComposer({
         uid,
         name: file.name,
         status: "done" as const,
-        originFileObj: file,
+        originFileObj: file as UploadFile["originFileObj"],
         url,
         thumbUrl: url,
       };
@@ -134,13 +134,17 @@ export default function InputComposer({
     setIsDragging(false);
   }, []);
 
-  const handleClear = useCallback(() => {
+  const clearComposer = useCallback(() => {
     objectUrlMap.current.forEach((url) => URL.revokeObjectURL(url));
     objectUrlMap.current.clear();
     setFileList([]);
     setMessage("");
+  }, []);
+
+  const handleClearChats = useCallback(() => {
+    clearComposer();
     onClearChats?.();
-  }, [onClearChats]);
+  }, [clearComposer, onClearChats]);
 
   const handleCopy = useCallback(async () => {
     if (!message.trim()) {
@@ -154,56 +158,46 @@ export default function InputComposer({
     }
   }, [message]);
 
-  const handleSend = useCallback(async () => {
-    if (isSending || sending) {
-      return;
-    }
-    const trimmed = message.trim();
-    const files = fileList
-      .map((item) => item.originFileObj)
-      .filter((file): file is File => Boolean(file));
-    if (!trimmed && files.length === 0) {
-      return;
-    }
-
-    if (!onSend) {
-      return;
-    }
-
-    setIsSending(true);
-    try {
-      await onSend({ prompt: trimmed, files });
-      objectUrlMap.current.forEach((url) => URL.revokeObjectURL(url));
-      objectUrlMap.current.clear();
-      setFileList([]);
-      setMessage("");
-    } finally {
-      setIsSending(false);
-    }
-  }, [fileList, isSending, message, onSend, sending]);
-
-  const handleOpenPromptLibrary = useCallback(() => {
-    setPromptLibraryOpen(true);
-  }, []);
-
-  const handleClosePromptLibrary = useCallback(() => {
-    setPromptLibraryOpen(false);
-  }, []);
-
-  const handleUsePrompt = useCallback((prompt: { content: string }) => {
-    setMessage(prompt.content);
-    setPromptLibraryOpen(false);
+  const handleUsePrompt = useCallback((payload: { content: string }) => {
+    setMessage((prev) => (prev ? `${prev}\n\n${payload.content}` : payload.content));
+    setIsPromptLibraryOpen(false);
   }, []);
 
   useEffect(() => {
+    const urls = objectUrlMap.current;
     return () => {
-      objectUrlMap.current.forEach((url) => URL.revokeObjectURL(url));
-      objectUrlMap.current.clear();
+      urls.forEach((url) => URL.revokeObjectURL(url));
+      urls.clear();
     };
   }, []);
 
+  const handleSend = useCallback(async () => {
+    if (sending) {
+      return;
+    }
+    const trimmedPrompt = message.trim();
+    const files = fileList.reduce<File[]>((acc, file) => {
+      if (file.originFileObj) {
+        acc.push(file.originFileObj as File);
+      }
+      return acc;
+    }, []);
+    if (!trimmedPrompt && files.length === 0) {
+      return;
+    }
+    if (!onSend) {
+      return;
+    }
+    try {
+      await onSend({ prompt: trimmedPrompt, files });
+      clearComposer();
+    } catch {
+      // Keep the composer content for retry on failure.
+    }
+  }, [clearComposer, fileList, message, onSend, sending]);
+
   return (
-    <div className="input-composer rounded-3xl bg-white/80 p-3 shadow-[0_30px_60px_-40px_rgba(15,23,42,0.55)] backdrop-blur">
+    <div className="input-composer rounded-3xl border border-white/70 bg-white/80 p-3 shadow-[0_30px_60px_-40px_rgba(15,23,42,0.55)] backdrop-blur">
       <div
         className={dropzoneClasses}
         onDrop={handleDrop}
@@ -219,6 +213,7 @@ export default function InputComposer({
             placeholder="写下你的需求，支持拖拽/粘贴图片…"
             autoSize={{ minRows: 2, maxRows: 4 }}
             className="flex-1 text-sm"
+            disabled={sending}
           />
           <Upload
             listType="picture-card"
@@ -229,6 +224,7 @@ export default function InputComposer({
             onRemove={handleRemove}
             className="composer-upload"
             showUploadList={{ showPreviewIcon: false }}
+            disabled={sending}
           >
             <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-[11px] text-slate-500">
               <ImagePlus size={16} />
@@ -242,8 +238,8 @@ export default function InputComposer({
         <Button
           type="default"
           icon={<BookOpen size={16} />}
-          onClick={handleOpenPromptLibrary}
           className="rounded-2xl border-slate-200 bg-white/90 text-slate-700 shadow-sm"
+          onClick={() => setIsPromptLibraryOpen(true)}
         >
           提示词库
         </Button>
@@ -260,21 +256,18 @@ export default function InputComposer({
             <Button
               type="text"
               icon={<Trash2 size={16} />}
-              onClick={handleClear}
+              onClick={handleClearChats}
               className="rounded-2xl text-slate-600 hover:text-slate-900"
             />
           </Tooltip>
           <Button
             type="primary"
             icon={<Send size={16} />}
-            onClick={handleSend}
-            loading={isSending || sending}
-            disabled={
-              isSending ||
-              sending ||
-              (message.trim().length === 0 && fileList.length === 0)
-            }
             className="rounded-2xl shadow-sm"
+            onClick={handleSend}
+            disabled={
+              sending || (!message.trim() && fileList.length === 0) || !onSend
+            }
           >
             发送
           </Button>
@@ -282,8 +275,8 @@ export default function InputComposer({
       </div>
 
       <PromptLibraryModal
-        open={promptLibraryOpen}
-        onClose={handleClosePromptLibrary}
+        open={isPromptLibraryOpen}
+        onClose={() => setIsPromptLibraryOpen(false)}
         onUsePrompt={handleUsePrompt}
       />
     </div>

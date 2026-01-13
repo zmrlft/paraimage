@@ -18,6 +18,7 @@ from storage import (
     set_prompt_library,
     set_app_setting,
     upsert_chat_session,
+    delete_chat_session as delete_chat_session_record,
 )
 from schemas import AppSettingsPayload
 
@@ -110,6 +111,13 @@ class ProApi:
 
         record = upsert_chat_session(session_id, model_id, title, messages)
         return {"ok": True, "session": self._session_to_dict(record)}
+
+    def delete_chat_session(self, session_id: str) -> dict[str, Any]:
+        session_id = (session_id or "").strip()
+        if not session_id:
+            return {"ok": False, "error": "session id is required"}
+        deleted = delete_chat_session_record(session_id)
+        return {"ok": deleted, "deleted": deleted, "id": session_id}
 
     def generate_image(self, payload: dict[str, Any]) -> dict[str, Any]:
         return generate_single(payload)

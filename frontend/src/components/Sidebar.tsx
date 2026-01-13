@@ -27,7 +27,7 @@ type SidebarProps = {
   onOpenImageManager?: () => void;
 };
 
-const repoUrl = "https://github.com/your-org/omniimage";
+const repoUrl = "https://github.com/your-org/paraimage";
 
 const { Sider } = Layout;
 

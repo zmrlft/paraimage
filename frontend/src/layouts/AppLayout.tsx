@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Layout } from "antd";
 
 import { generateImage } from "../api/generate";
-import { getChatSessions, saveChatSession } from "../api/history";
+import {
+  deleteChatSession,
+  getChatSessions,
+  saveChatSession,
+} from "../api/history";
 import { getProviderConfigs } from "../api/settings";
 import ChatHistoryModal from "../components/ChatHistoryModal";
 import ChatWindowCard from "../components/ChatWindowCard";
@@ -12,6 +16,7 @@ import Sidebar from "../components/Sidebar";
 import {
   buildModelList,
   buildModelMap,
+  type ModelDefinition,
   type ModelValue,
 } from "../data/models";
 import type { ChatMessage, ChatSession, ImageReference } from "../types/chat";
@@ -52,6 +57,56 @@ const createWindowState = (index: number): ChatWindowState => ({
 
 const getNextWindowId = (windows: ChatWindowState[]) =>
   windows.reduce((max, window) => Math.max(max, window.id), -1) + 1;
+
+const syncWindowsToLayout = (
+  windows: ChatWindowState[],
+  layoutCount: LayoutCount
+) => {
+  if (layoutCount === windows.length) {
+    return windows;
+  }
+  if (layoutCount < windows.length) {
+    return windows.slice(0, layoutCount);
+  }
+  const next = [...windows];
+  let nextId = getNextWindowId(windows);
+  while (next.length < layoutCount) {
+    next.push(createWindowState(nextId));
+    nextId += 1;
+  }
+  return next;
+};
+
+const syncWindowsToModels = (
+  windows: ChatWindowState[],
+  models: ModelDefinition[],
+  modelMap: Map<ModelValue, ModelDefinition>
+) =>
+  windows.map((window, index) => {
+    if (window.modelId && modelMap.has(window.modelId)) {
+      return window;
+    }
+    const nextModel = models[index % models.length]?.value ?? null;
+    if (!nextModel) {
+      return window.modelId
+        ? { ...window, modelId: null, isGenerating: false }
+        : window;
+    }
+    return {
+      ...window,
+      modelId: nextModel,
+      messages: [],
+      isGenerating: false,
+      sessionId: createSessionId(),
+    };
+  });
+
+const normalizeWindows = (
+  windows: ChatWindowState[],
+  layoutCount: LayoutCount,
+  models: ModelDefinition[],
+  modelMap: Map<ModelValue, ModelDefinition>
+) => syncWindowsToModels(syncWindowsToLayout(windows, layoutCount), models, modelMap);
 
 const readFileAsDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -126,15 +181,17 @@ export default function AppLayout() {
 
   const refreshProviderConfigs = useCallback(async () => {
     const configs = await getProviderConfigs();
-    setProviderConfigs(
-      configs.map((config) => ({
-        id: config.providerName,
-        providerName: config.providerName,
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        modelIds: config.modelIds ?? [],
-      }))
-    );
+    const nextConfigs = configs.map((config) => ({
+      id: config.providerName,
+      providerName: config.providerName,
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      modelIds: config.modelIds ?? [],
+    }));
+    const nextModels = buildModelList(nextConfigs);
+    const nextModelMap = buildModelMap(nextModels);
+    setProviderConfigs(nextConfigs);
+    setChatWindows((prev) => syncWindowsToModels(prev, nextModels, nextModelMap));
   }, []);
 
   useEffect(() => {
@@ -156,46 +213,15 @@ export default function AppLayout() {
     chatWindowsRef.current = chatWindows;
   }, [chatWindows]);
 
-  useEffect(() => {
-    setChatWindows((prev) => {
-      if (layoutCount === prev.length) {
-        return prev;
-      }
-      if (layoutCount < prev.length) {
-        return prev.slice(0, layoutCount);
-      }
-      const next = [...prev];
-      let nextId = getNextWindowId(prev);
-      while (next.length < layoutCount) {
-        next.push(createWindowState(nextId));
-        nextId += 1;
-      }
-      return next;
-    });
-  }, [layoutCount]);
-
-  useEffect(() => {
-    setChatWindows((prev) =>
-      prev.map((window, index) => {
-        if (window.modelId && modelMap.has(window.modelId)) {
-          return window;
-        }
-        const nextModel = models[index % models.length]?.value ?? null;
-        if (!nextModel) {
-          return window.modelId
-            ? { ...window, modelId: null, isGenerating: false }
-            : window;
-        }
-        return {
-          ...window,
-          modelId: nextModel,
-          messages: [],
-          isGenerating: false,
-          sessionId: createSessionId(),
-        };
-      })
-    );
-  }, [modelMap, models]);
+  const handleLayoutChange = useCallback(
+    (nextCount: LayoutCount) => {
+      setLayoutCount(nextCount);
+      setChatWindows((prev) =>
+        normalizeWindows(prev, nextCount, models, modelMap)
+      );
+    },
+    [modelMap, models]
+  );
 
   const handleClearChats = useCallback(() => {
     setChatWindows((prev) =>
@@ -241,9 +267,7 @@ export default function AppLayout() {
       };
 
       setChatHistories((prev) => {
-        const sessions = prev[modelKey]
-          ? [...prev[modelKey]]
-          : [];
+        const sessions = prev[modelKey] ? [...prev[modelKey]] : [];
         const index = sessions.findIndex(
           (session) => session.id === window.sessionId
         );
@@ -395,11 +419,12 @@ export default function AppLayout() {
 
       await Promise.allSettled(
         windowsSnapshot.map(async (window) => {
-          if (!eligibleIds.has(window.id) || !window.modelId) {
+          const modelId = window.modelId;
+          if (!eligibleIds.has(window.id) || !modelId) {
             return;
           }
           try {
-            const modelMeta = modelMap.get(window.modelId);
+            const modelMeta = modelMap.get(modelId);
             if (!modelMeta) {
               return;
             }
@@ -419,14 +444,14 @@ export default function AppLayout() {
                   ? {
                       id: createId(),
                       role: "assistant",
-                      modelId: window.modelId,
+                      modelId,
                       imageUrl: response.imageUrl,
                       createdAt: new Date().toISOString(),
                     }
                   : {
                       id: createId(),
                       role: "assistant",
-                      modelId: window.modelId,
+                      modelId,
                       error: response.error || "生成失败",
                       createdAt: new Date().toISOString(),
                     };
@@ -441,24 +466,21 @@ export default function AppLayout() {
               })
             );
           } catch (error) {
-            const message =
-              error instanceof Error ? error.message : "生成失败";
+            const message = error instanceof Error ? error.message : "生成失败";
             setChatWindows((prev) =>
               prev.map((item) =>
                 item.id === window.id
                   ? (() => {
+                      const assistantMessage: ChatMessage = {
+                        id: createId(),
+                        role: "assistant",
+                        modelId,
+                        error: message,
+                        createdAt: new Date().toISOString(),
+                      };
                       const nextWindow = {
                         ...item,
-                        messages: [
-                          ...item.messages,
-                          {
-                            id: createId(),
-                            role: "assistant",
-                            modelId: window.modelId,
-                            error: message,
-                            createdAt: new Date().toISOString(),
-                          },
-                        ],
+                        messages: [...item.messages, assistantMessage],
                         isGenerating: false,
                       };
                       recordSession(nextWindow);
@@ -492,7 +514,8 @@ export default function AppLayout() {
       if (windowSnapshot.isGenerating) {
         return;
       }
-      const modelMeta = modelMap.get(windowSnapshot.modelId);
+      const modelId = windowSnapshot.modelId;
+      const modelMeta = modelMap.get(modelId);
       if (!modelMeta) {
         return;
       }
@@ -520,14 +543,14 @@ export default function AppLayout() {
               ? {
                   id: createId(),
                   role: "assistant",
-                  modelId: window.modelId,
+                  modelId,
                   imageUrl: response.imageUrl,
                   createdAt: new Date().toISOString(),
                 }
               : {
                   id: createId(),
                   role: "assistant",
-                  modelId: window.modelId,
+                  modelId,
                   error: response.error || "生成失败",
                   createdAt: new Date().toISOString(),
                 };
@@ -547,18 +570,16 @@ export default function AppLayout() {
             if (window.id !== windowId) {
               return window;
             }
+            const assistantMessage: ChatMessage = {
+              id: createId(),
+              role: "assistant",
+              modelId,
+              error: messageText,
+              createdAt: new Date().toISOString(),
+            };
             const nextWindow = {
               ...window,
-              messages: [
-                ...window.messages,
-                {
-                  id: createId(),
-                  role: "assistant",
-                  modelId: window.modelId,
-                  error: messageText,
-                  createdAt: new Date().toISOString(),
-                },
-              ],
+              messages: [...window.messages, assistantMessage],
               isGenerating: false,
             };
             recordSession(nextWindow);
@@ -575,17 +596,18 @@ export default function AppLayout() {
     [chatWindows]
   );
 
-  useEffect(() => {
+  const resolvedSelectedSessionId = useMemo(() => {
     if (!historyModal.open || !historyModal.modelId) {
-      return;
+      return null;
     }
     const sessions = chatHistories[historyModal.modelId] ?? [];
     if (
-      !selectedSessionId ||
-      !sessions.some((session) => session.id === selectedSessionId)
+      selectedSessionId &&
+      sessions.some((session) => session.id === selectedSessionId)
     ) {
-      setSelectedSessionId(sessions[0]?.id ?? null);
+      return selectedSessionId;
     }
+    return sessions[0]?.id ?? null;
   }, [
     chatHistories,
     historyModal.modelId,
@@ -644,6 +666,27 @@ export default function AppLayout() {
     setSelectedSessionId(null);
   }, []);
 
+  const handleDeleteHistorySession = useCallback(
+    (sessionId: string) => {
+      if (!historyModal.modelId) {
+        return;
+      }
+      const modelId = historyModal.modelId;
+      setChatHistories((prev) => {
+        const sessions = prev[modelId] ?? [];
+        const nextSessions = sessions.filter(
+          (session) => session.id !== sessionId
+        );
+        return { ...prev, [modelId]: nextSessions };
+      });
+      setSelectedSessionId((prev) => (prev === sessionId ? null : prev));
+      deleteChatSession(sessionId).catch(() => {
+        // Best-effort delete; ignore failures in dev mode.
+      });
+    },
+    [historyModal.modelId]
+  );
+
   const sourceImages = useMemo<ImageManagerItem[]>(() => {
     const results: ImageManagerItem[] = [];
     chatWindows.forEach((window) => {
@@ -655,7 +698,7 @@ export default function AppLayout() {
           id: `source-${window.id}-${message.id}`,
           imageUrl: message.imageUrl,
           origin: "source",
-          modelId: message.modelId ?? window.modelId,
+          modelId: message.modelId ?? window.modelId ?? undefined,
           windowId: window.id,
           messageId: message.id,
           createdAt: message.createdAt,
@@ -707,7 +750,12 @@ export default function AppLayout() {
       );
       handleCloseHistory();
     },
-    [chatHistories, handleCloseHistory, historyModal.modelId, historyModal.windowId]
+    [
+      chatHistories,
+      handleCloseHistory,
+      historyModal.modelId,
+      historyModal.windowId,
+    ]
   );
 
   return (
@@ -718,7 +766,7 @@ export default function AppLayout() {
       >
         <Sidebar
           layoutCount={layoutCount}
-          onLayoutChange={setLayoutCount}
+          onLayoutChange={handleLayoutChange}
           models={models}
           onProvidersSaved={refreshProviderConfigs}
           onModelSelect={handleFocusModel}
@@ -770,9 +818,10 @@ export default function AppLayout() {
         sessions={
           historyModal.modelId ? chatHistories[historyModal.modelId] ?? [] : []
         }
-        selectedSessionId={selectedSessionId}
+        selectedSessionId={resolvedSelectedSessionId}
         onSelectSession={setSelectedSessionId}
         onContinue={handleContinueSession}
+        onDeleteSession={handleDeleteHistorySession}
         onClose={handleCloseHistory}
       />
 

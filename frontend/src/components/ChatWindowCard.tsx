@@ -281,7 +281,17 @@ export default function ChatWindowCard({
               (message.modelId && modelMap.get(message.modelId)?.label) ||
               activeModel?.label ||
               "模型";
-            const copyDisabled = !message.error && !message.imageUrl;
+            const imageUrl = message.imageUrl;
+            const copyDisabled = !message.error && !imageUrl;
+            const handleCopyClick = () => {
+              if (message.error) {
+                copyTextToClipboard(message.error);
+                return;
+              }
+              if (imageUrl) {
+                copyImageToClipboard(imageUrl);
+              }
+            };
 
             return (
               <div key={message.id} className="flex justify-start">
@@ -297,11 +307,7 @@ export default function ChatWindowCard({
                         type="text"
                         size="small"
                         icon={<Copy size={14} />}
-                        onClick={() =>
-                          message.error
-                            ? copyTextToClipboard(message.error)
-                            : copyImageToClipboard(message.imageUrl || "")
-                        }
+                        onClick={handleCopyClick}
                         disabled={copyDisabled}
                         className="text-slate-400 hover:text-slate-600"
                       />
@@ -312,16 +318,16 @@ export default function ChatWindowCard({
                       {message.error}
                     </div>
                   ) : (
-                    message.imageUrl && (
+                    imageUrl && (
                       <div className="group relative mt-2 w-full max-w-56 select-auto">
                         <img
-                          src={message.imageUrl}
+                          src={imageUrl}
                           alt={`${modelLabel} output`}
                           className="w-full cursor-pointer rounded-xl object-cover transition select-auto"
                           loading="lazy"
                           onClick={() =>
                             handleOpenPreview(
-                              message.imageUrl,
+                              imageUrl,
                               `${modelLabel} output`
                             )
                           }
@@ -337,7 +343,7 @@ export default function ChatWindowCard({
                                 onImageClick?.({
                                   windowId,
                                   messageId: message.id,
-                                  imageUrl: message.imageUrl,
+                                  imageUrl,
                                 });
                               }}
                               className="rounded-full shadow-sm"
@@ -350,7 +356,7 @@ export default function ChatWindowCard({
                               onClick={(event) => {
                                 event.stopPropagation();
                                 handleOpenPreview(
-                                  message.imageUrl,
+                                  imageUrl,
                                   `${modelLabel} output`
                                 );
                               }}

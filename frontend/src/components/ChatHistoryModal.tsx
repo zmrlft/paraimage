@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
-import { Button, Input, Modal } from "antd";
-import { ArrowRight, Search } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import { Button, Input, Modal, Tooltip } from "antd";
+import { ArrowRight, Search, Trash2 } from "lucide-react";
 
 import type { ModelDefinition, ModelValue } from "../data/models";
 import type { ChatSession } from "../types/chat";
@@ -13,6 +13,7 @@ type ChatHistoryModalProps = {
   selectedSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
   onContinue: (sessionId: string) => void;
+  onDeleteSession: (sessionId: string) => void;
   onClose: () => void;
 };
 
@@ -35,6 +36,7 @@ export default function ChatHistoryModal({
   selectedSessionId,
   onSelectSession,
   onContinue,
+  onDeleteSession,
   onClose,
 }: ChatHistoryModalProps) {
   const [keyword, setKeyword] = useState("");
@@ -72,6 +74,20 @@ export default function ChatHistoryModal({
     (session) => session.id === selectedSessionId
   );
 
+  const handleDeleteSession = useCallback(
+    (session: ChatSession) => {
+      Modal.confirm({
+        title: "删除会话",
+        content: `确定删除「${buildSessionTitle(session.title)}」吗？`,
+        okText: "删除",
+        okType: "danger",
+        cancelText: "取消",
+        onOk: () => onDeleteSession(session.id),
+      });
+    },
+    [onDeleteSession]
+  );
+
   return (
     <Modal
       title={`${modelLabel} 聊天记录`}
@@ -102,23 +118,36 @@ export default function ChatHistoryModal({
                 {filteredSessions.map((session) => {
                   const isActive = session.id === selectedSessionId;
                   return (
-                    <button
+                    <div
                       key={session.id}
-                      type="button"
-                      onClick={() => onSelectSession(session.id)}
-                      className={`rounded-2xl border p-3 text-left transition ${
+                      className={`flex items-start gap-2 rounded-2xl border p-3 transition ${
                         isActive
                           ? "border-slate-200 bg-white shadow-sm"
                           : "border-transparent bg-transparent hover:bg-slate-50"
                       }`}
                     >
-                      <div className="text-sm font-semibold text-slate-700">
-                        {buildSessionTitle(session.title)}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-400">
-                        {timeFormatter.format(new Date(session.updatedAt))}
-                      </div>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => onSelectSession(session.id)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className="text-sm font-semibold text-slate-700">
+                          {buildSessionTitle(session.title)}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-400">
+                          {timeFormatter.format(new Date(session.updatedAt))}
+                        </div>
+                      </button>
+                      <Tooltip title="删除">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<Trash2 size={14} />}
+                          onClick={() => handleDeleteSession(session)}
+                          className="text-slate-400 hover:text-rose-500"
+                        />
+                      </Tooltip>
+                    </div>
                   );
                 })}
               </div>
