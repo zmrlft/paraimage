@@ -8,10 +8,21 @@ import {
   saveAppSettings,
 } from "../api/appSettings";
 import {
+  checkUpdate,
+  downloadUpdate,
+  getAppInfo,
+  installUpdate,
+  type UpdateCheckResponse,
+} from "../api/update";
+import {
   getProviderConfigs,
   saveProviderConfig,
 } from "../api/settings";
-import { getModelIconUrl, providerPresets } from "../data/models";
+import {
+  getModelIconUrl,
+  getProviderPreset,
+  providerPresets,
+} from "../data/models";
 import type { ProviderConfig } from "../types/provider";
 
 type SettingsModalProps = {
@@ -26,7 +37,7 @@ const createPresetConfigs = (): ProviderConfig[] => {
     providerName: preset.providerName,
     baseUrl: preset.defaultBaseUrl ?? "",
     apiKey: "",
-    modelIds: [],
+    modelIds: preset.defaultModelIds ? [...preset.defaultModelIds] : [],
     iconSlug: preset.iconSlug,
   }));
 };
@@ -34,6 +45,7 @@ const createPresetConfigs = (): ProviderConfig[] => {
 const settingsMenuItems = [
   { key: "providers", label: "AI 供应商配置" },
   { key: "data", label: "数据与隐私" },
+  { key: "about", label: "关于与更新" },
   { key: "experiments", label: "实验功能" },
 ] satisfies NonNullable<MenuProps["items"]>;
 
@@ -78,6 +90,18 @@ export default function SettingsModal({
   const [defaultSaveDir, setDefaultSaveDir] = useState<string>("");
   const [isSavingData, setIsSavingData] = useState(false);
   const [isPickingDir, setIsPickingDir] = useState(false);
+  const [appInfo, setAppInfo] = useState<{
+    version: string;
+    repoUrl: string;
+  } | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResponse | null>(
+    null
+  );
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isDownloadingUpdate, setIsDownloadingUpdate] = useState(false);
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
+  const [updateActionMessage, setUpdateActionMessage] = useState("");
+  const [updateActionError, setUpdateActionError] = useState("");
   const availableKeys = useMemo(
     () =>
       new Set(
@@ -192,6 +216,28 @@ export default function SettingsModal({
   }, [open]);
 
   useEffect(() => {
+    if (!open) {
+      return;
+    }
+    let active = true;
+    getAppInfo()
+      .then((info) => {
+        if (!active) {
+          return;
+        }
+        setAppInfo(info);
+      })
+      .catch(() => {
+        if (active) {
+          setAppInfo(null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [open]);
+
+  useEffect(() => {
     if (!providerConfigs.length) {
       setActiveProviderId("");
       return;
@@ -260,6 +306,48 @@ export default function SettingsModal({
     setIsPickingDir(false);
   }, [isPickingDir]);
 
+  const handleCheckUpdate = useCallback(async () => {
+    if (isCheckingUpdate) {
+      return;
+    }
+    setIsCheckingUpdate(true);
+    setUpdateActionMessage("");
+    setUpdateActionError("");
+    const response = await checkUpdate();
+    setUpdateInfo(response);
+    setIsCheckingUpdate(false);
+  }, [isCheckingUpdate]);
+
+  const handleInstallUpdate = useCallback(async () => {
+    if (isDownloadingUpdate || isInstallingUpdate) {
+      return;
+    }
+    const assetUrl = updateInfo?.asset?.url;
+    if (!assetUrl) {
+      return;
+    }
+    setUpdateActionError("");
+    setUpdateActionMessage("正在下载更新...");
+    setIsDownloadingUpdate(true);
+    const downloadResponse = await downloadUpdate(assetUrl);
+    setIsDownloadingUpdate(false);
+    if (!downloadResponse.ok || !downloadResponse.path) {
+      setUpdateActionMessage("");
+      setUpdateActionError(downloadResponse.error || "下载失败");
+      return;
+    }
+    setUpdateActionMessage("下载完成，正在安装...");
+    setIsInstallingUpdate(true);
+    const installResponse = await installUpdate(downloadResponse.path);
+    setIsInstallingUpdate(false);
+    if (!installResponse.ok) {
+      setUpdateActionMessage("");
+      setUpdateActionError(installResponse.error || "安装失败");
+      return;
+    }
+    setUpdateActionMessage("正在安装，应用即将关闭...");
+  }, [isDownloadingUpdate, isInstallingUpdate, updateInfo]);
+
   const handleAutoSaveClose = useCallback(() => {
     if (isSaving || isSavingData) {
       return;
@@ -293,6 +381,18 @@ export default function SettingsModal({
   );
 
   const providerContent = useMemo(() => {
+    const modelOptions = (() => {
+      if (!activeProvider) {
+        return [];
+      }
+      const preset = getProviderPreset(activeProvider.providerName);
+      const defaults = preset?.defaultModelIds ?? [];
+      return defaults.map((modelId) => ({
+        label: modelId,
+        value: modelId,
+      }));
+    })();
+
     const renderProviderIcon = (config: ProviderConfig) => {
       if (config.iconSlug) {
         return (
@@ -452,6 +552,7 @@ export default function SettingsModal({
                           modelIds: normalizeModelIds(values as string[]),
                         })
                       }
+                      options={modelOptions}
                       tokenSeparators={[",", "，", "\n", "\t", " "]}
                       placeholder="输入模型型号，回车或逗号分隔"
                       className="w-full"
@@ -546,6 +647,132 @@ export default function SettingsModal({
     isSavingData,
   ]);
 
+  const aboutContent = useMemo(() => {
+    const currentVersion = appInfo?.version || "未知";
+    const repoUrl = appInfo?.repoUrl || "https://github.com/zmrlft/paraimage";
+    const updateAvailable =
+      updateInfo?.ok && updateInfo.updateAvailable === true;
+    const latestVersion =
+      updateInfo?.ok && updateInfo.latestVersion
+        ? updateInfo.latestVersion
+        : "";
+    const assetUrl = updateInfo?.asset?.url || "";
+    const assetInstallable = updateInfo?.asset?.installable !== false;
+    const releaseUrl =
+      updateInfo?.ok && updateInfo.releaseUrl
+        ? updateInfo.releaseUrl
+        : repoUrl;
+    const notes = updateInfo?.ok ? updateInfo.notes?.trim() || "" : "";
+    const notesPreview =
+      notes.length > 600 ? `${notes.slice(0, 600)}...` : notes;
+    const actionPending = isDownloadingUpdate || isInstallingUpdate;
+
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="text-base font-semibold text-slate-900">
+          关于与更新
+        </div>
+        <div className="mt-1 text-xs text-slate-500">
+          当前版本：{currentVersion}
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button
+            type="primary"
+            onClick={handleCheckUpdate}
+            loading={isCheckingUpdate}
+            className="rounded-xl"
+          >
+            检查更新
+          </Button>
+          <Button
+            type="default"
+            href={releaseUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-xl"
+          >
+            打开 Release
+          </Button>
+        </div>
+
+        {updateInfo?.ok === false && (
+          <div className="mt-3 text-xs text-rose-500">
+            更新检查失败：{updateInfo.error || "未知错误"}
+          </div>
+        )}
+
+        {updateActionError && (
+          <div className="mt-3 text-xs text-rose-500">
+            更新操作失败：{updateActionError}
+          </div>
+        )}
+
+        {updateActionMessage && (
+          <div className="mt-3 text-xs text-slate-500">
+            {updateActionMessage}
+          </div>
+        )}
+
+        {updateInfo?.ok && (
+          <div className="mt-4 space-y-2 text-xs text-slate-500">
+            <div>
+              最新版本：{latestVersion || "未知"}
+              {updateAvailable ? "（可更新）" : "（已是最新）"}
+            </div>
+            {updateInfo.asset?.name && (
+              <div>安装包：{updateInfo.asset.name}</div>
+            )}
+            {notesPreview && (
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-slate-600">
+                <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+                  Release Notes
+                </div>
+                <div className="whitespace-pre-wrap text-xs">
+                  {notesPreview}
+                </div>
+              </div>
+            )}
+            {updateAvailable && assetUrl && (
+              <div className="flex flex-wrap items-center gap-2">
+                {assetInstallable ? (
+                  <Button
+                    type="default"
+                    onClick={handleInstallUpdate}
+                    loading={actionPending}
+                    disabled={actionPending}
+                    className="rounded-xl"
+                  >
+                    下载并安装
+                  </Button>
+                ) : (
+                  <Button
+                    type="default"
+                    href={assetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-xl"
+                  >
+                    下载更新
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }, [
+    appInfo,
+    handleCheckUpdate,
+    handleInstallUpdate,
+    isCheckingUpdate,
+    isDownloadingUpdate,
+    isInstallingUpdate,
+    updateActionError,
+    updateActionMessage,
+    updateInfo,
+  ]);
+
   return (
     <Modal
       title="设置"
@@ -575,6 +802,8 @@ export default function SettingsModal({
             ? providerContent
             : activeKey === "data"
               ? dataContent
+              : activeKey === "about"
+                ? aboutContent
               : placeholderContent}
         </section>
       </div>

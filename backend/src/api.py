@@ -1,11 +1,10 @@
 # src/api.py
 from __future__ import annotations
 
+from threading import Timer
 from typing import Any
 
-from services.generation import generate_batch, generate_single
-from services.image_processing import process_images
-from services.image_saving import choose_save_directory, save_images
+from app_info import APP_REPO_URL, APP_VERSION
 from storage import (
     ChatSession,
     Settings,
@@ -31,12 +30,28 @@ class ProApi:
     def set_window(self, window):
         self._window = window
 
+    def _schedule_app_exit(self) -> None:
+        if not self._window:
+            return
+        def _close() -> None:
+            try:
+                self._window.destroy()
+            except Exception:
+                pass
+        Timer(0.6, _close).start()
+
     # 供前端调用的测试接口
     def get_app_status(self):
         return {
             "status": "online",
-            "version": "1.0.0",
+            "version": APP_VERSION,
             "message": "后端已就绪！",
+        }
+
+    def get_app_info(self) -> dict[str, Any]:
+        return {
+            "version": APP_VERSION,
+            "repoUrl": APP_REPO_URL,
         }
 
     # 模拟获取支持的模型列表
@@ -120,15 +135,23 @@ class ProApi:
         return {"ok": deleted, "deleted": deleted, "id": session_id}
 
     def generate_image(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from services.generation import generate_single
+
         return generate_single(payload)
 
     def generate_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from services.generation import generate_batch
+
         return generate_batch(payload)
 
     def process_images(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from services.image_processing import process_images
+
         return process_images(payload)
 
     def save_images(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from services.image_saving import save_images
+
         return save_images(payload, window=self._window)
 
     def get_app_settings(self) -> dict[str, Any]:
@@ -150,6 +173,8 @@ class ProApi:
         }
 
     def choose_save_directory(self) -> dict[str, Any]:
+        from services.image_saving import choose_save_directory
+
         return choose_save_directory(window=self._window)
 
     def get_prompt_library(self) -> dict[str, Any]:
@@ -161,3 +186,27 @@ class ProApi:
             return {"ok": False, "error": "prompts must be a list"}
         set_prompt_library(prompts)
         return {"ok": True, "prompts": prompts}
+
+    def check_update(self) -> dict[str, Any]:
+        from services.update import check_for_updates
+
+        return check_for_updates()
+
+    def download_update(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "payload must be an object"}
+        asset_url = payload.get("assetUrl")
+        from services.update import download_update
+
+        return download_update(asset_url)
+
+    def install_update(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "payload must be an object"}
+        archive_path = payload.get("path")
+        from services.update import install_update
+
+        response = install_update(archive_path)
+        if response.get("ok"):
+            self._schedule_app_exit()
+        return response

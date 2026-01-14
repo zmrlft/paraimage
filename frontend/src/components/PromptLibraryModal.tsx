@@ -120,6 +120,11 @@ export default function PromptLibraryModal({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const promptsRef = useRef<PromptItem[]>([]);
+
+  useEffect(() => {
+    promptsRef.current = prompts;
+  }, [prompts]);
 
   useEffect(() => {
     if (!open) {
@@ -146,6 +151,36 @@ export default function PromptLibraryModal({
       });
     return () => {
       active = false;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || typeof window === "undefined") {
+      return;
+    }
+    let active = true;
+    const handleReady = () => {
+      if (!active || promptsRef.current.length > 0) {
+        return;
+      }
+      setIsLoading(true);
+      getPromptLibrary()
+        .then((items) => {
+          if (!active) {
+            return;
+          }
+          setPrompts(items);
+        })
+        .finally(() => {
+          if (active) {
+            setIsLoading(false);
+          }
+        });
+    };
+    window.addEventListener("pywebviewready", handleReady);
+    return () => {
+      active = false;
+      window.removeEventListener("pywebviewready", handleReady);
     };
   }, [open]);
 

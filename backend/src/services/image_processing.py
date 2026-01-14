@@ -9,8 +9,6 @@ from typing import Any
 
 from PIL import Image
 from pydantic import ValidationError
-from rembg import remove
-
 from schemas import ProcessImagesRequest
 
 
@@ -103,6 +101,8 @@ def process_images(payload: dict[str, Any]) -> dict[str, Any]:
             continue
         try:
             if action == "remove_bg":
+                from rembg import remove
+
                 processed = remove(image_bytes)
                 data_url = _to_png_data_url(processed)
                 results.append({"id": item.id, "images": [data_url]})

@@ -45,6 +45,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Read app version
+        id: app_version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          text = Path("backend/src/app_info.py").read_text(encoding="utf-8")
+          match = re.search(r'APP_VERSION\\s*=\\s*"([^"]+)"', text)
+          version = match.group(1) if match else "0.0.0"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+            handle.write(f"version={version}\\n")
+          PY
+
       - name: Setup uv
         uses: astral-sh/setup-uv@v3
 
@@ -62,11 +77,50 @@ jobs:
       - name: Build package
         run: uv run --project backend python scripts/build_package.py
 
+      - name: Prepare artifacts directory
+        shell: bash
+        run: mkdir -p artifacts
+
+      - name: Download WebView2 bootstrapper
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path scripts\installer\windows | Out-Null
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile "scripts\installer\windows\MicrosoftEdgeWebView2Setup.exe"
+
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dist = Join-Path $env:GITHUB_WORKSPACE "dist\ParaImage"
+          $out = Join-Path $env:GITHUB_WORKSPACE "artifacts\ParaImage-setup-windows.exe"
+          $bootstrap = Join-Path $env:GITHUB_WORKSPACE "scripts\installer\windows\MicrosoftEdgeWebView2Setup.exe"
+          $nsi = Join-Path $env:GITHUB_WORKSPACE "scripts\installer\windows\ParaImage.nsi"
+          $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
+          }
+          if (-not $makensis) {
+            throw "makensis not found after installing NSIS"
+          }
+          & $makensis "/DAPP_VERSION=${{ steps.app_version.outputs.version }}" "/DDIST_DIR=$dist" "/DOUTPUT_FILE=$out" "/DWEBVIEW2_BOOTSTRAPPER=$bootstrap" "/DEXE_NAME=ParaImage.exe" "$nsi"
+
+      - name: Build macOS DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          chmod +x scripts/installer/macos/create_dmg.sh
+          scripts/installer/macos/create_dmg.sh "dist/ParaImage.app" "artifacts/ParaImage-macos.dmg" "ParaImage"
+
       - name: Package artifact
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             tar -a -c -f artifacts/ParaImage-windows.zip -C dist ParaImage
           elif [[ "$RUNNER_OS" == "macOS" ]]; then

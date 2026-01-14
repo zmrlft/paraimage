@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 import webview
 from api import ProApi
+from startup_log import log_startup, launch_startup_terminal
 
 
 def get_resource_path(*parts: str) -> Path:
@@ -14,7 +15,10 @@ def get_resource_path(*parts: str) -> Path:
 
 
 def main():
+    launch_startup_terminal()
+    log_startup("main_enter")
     api = ProApi()
+    log_startup("api_ready")
     
     # 根据环境变量判断加载哪个地址
     # 开发环境加载 Vite 端口，生产环境加载打包后的 HTML
@@ -42,9 +46,10 @@ def main():
         except (TypeError, ValueError):
             pass
     window = webview.create_window(**window_kwargs)
+    log_startup("window_created")
     
     api.set_window(window)
-    webview.start(debug=debug) # debug=True 可以在窗口点右键开启审查元素
+    webview.start(func=lambda: log_startup("webview_ready"), debug=debug)
 
 if __name__ == '__main__':
     main()

@@ -15,6 +15,7 @@ export type ProviderPreset = {
   providerName: string;
   iconSlug?: string;
   defaultBaseUrl?: string;
+  defaultModelIds?: string[];
 };
 
 export const providerPresets: ProviderPreset[] = [
@@ -22,6 +23,7 @@ export const providerPresets: ProviderPreset[] = [
     providerName: "Volcengine Ark",
     iconSlug: "doubao-color",
     defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    defaultModelIds: ["Doubao-Seedream-4.5", "Doubao-Seedream-4.0"],
   },
   {
     providerName: "OpenAI",
@@ -37,11 +39,13 @@ export const providerPresets: ProviderPreset[] = [
     providerName: "Alibaba DashScope",
     iconSlug: "qwen-color",
     defaultBaseUrl: "https://dashscope.aliyuncs.com/api/v1",
+    defaultModelIds: ["qwen-image-edit-plus", "qwen-image-max"],
   },
   {
     providerName: "AIHubMix",
     iconSlug: "/logo.png",
     defaultBaseUrl: "https://aihubmix.com/v1",
+    defaultModelIds: ["Nano-banana-Pro"],
   },
 ];
 
@@ -72,6 +76,9 @@ export const buildModelList = (
   providers.forEach((provider) => {
     const providerName = provider.providerName.trim();
     if (!providerName) {
+      return;
+    }
+    if (!provider.apiKey.trim()) {
       return;
     }
     const preset = getProviderPreset(providerName);

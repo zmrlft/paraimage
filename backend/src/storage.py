@@ -2,13 +2,42 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
 from peewee import CharField, DateTimeField, Model, SqliteDatabase, TextField
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+from app_info import APP_NAME
+from startup_log import log_startup
+
+DATA_DIR_ENV = "PARAIMAGE_DATA_DIR"
+
+
+def _default_user_data_dir() -> Path:
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
+        if base:
+            return Path(base) / APP_NAME
+        return Path.home() / "AppData" / "Roaming" / APP_NAME
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    base = os.environ.get("XDG_DATA_HOME")
+    if base:
+        return Path(base) / APP_NAME
+    return Path.home() / ".local" / "share" / APP_NAME
+
+
+def _resolve_data_dir() -> Path:
+    override = os.environ.get(DATA_DIR_ENV)
+    if override:
+        return Path(override)
+    return _default_user_data_dir()
+
+
+DATA_DIR = _resolve_data_dir()
 DB_PATH = DATA_DIR / "paraimage.db"
 database = SqliteDatabase(DB_PATH)
 
@@ -79,6 +108,64 @@ def _migrate_legacy_db_path() -> None:
     except Exception:
         # Best-effort migration; keep legacy path if rename fails.
         pass
+
+
+def _legacy_data_dirs() -> list[Path]:
+    candidates = [
+        Path(__file__).resolve().parent.parent / "data",
+        Path(sys.executable).resolve().parent / "data",
+    ]
+    if getattr(sys, "_MEIPASS", None):
+        candidates.append(Path(sys._MEIPASS) / "data")
+    unique: list[Path] = []
+    seen = set()
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except Exception:
+            resolved = path
+        if resolved == DATA_DIR:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(path)
+    return unique
+
+
+def _migrate_legacy_data_dir() -> None:
+    if DB_PATH.exists():
+        return
+    for legacy_dir in _legacy_data_dirs():
+        legacy_db = legacy_dir / DB_PATH.name
+        if not legacy_db.exists():
+            continue
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            try:
+                legacy_db.replace(DB_PATH)
+            except Exception:
+                shutil.copy2(legacy_db, DB_PATH)
+            legacy_exports = legacy_dir / "exports"
+            target_exports = DATA_DIR / "exports"
+            if legacy_exports.exists() and not target_exports.exists():
+                try:
+                    shutil.copytree(legacy_exports, target_exports)
+                except Exception:
+                    pass
+            legacy_prompt_library = legacy_dir / "prompt-library.json"
+            target_prompt_library = DATA_DIR / "prompt-library.json"
+            if (
+                legacy_prompt_library.exists()
+                and not target_prompt_library.exists()
+            ):
+                try:
+                    shutil.copy2(legacy_prompt_library, target_prompt_library)
+                except Exception:
+                    pass
+            return
+        except Exception:
+            continue
 
 
 def _build_prompt_title(content: str) -> str:
@@ -157,6 +244,8 @@ def _load_default_prompt_library() -> list[dict]:
     env_path = os.environ.get(PROMPT_LIBRARY_PATH_ENV)
     if env_path:
         candidates.append(Path(env_path))
+    if getattr(sys, "_MEIPASS", None):
+        candidates.append(Path(sys._MEIPASS) / "prompt-library.json")
     candidates.extend(
         [
             Path(__file__).resolve().parent.parent.parent / "prompt-library.json",
@@ -191,15 +280,22 @@ def _seed_prompt_library() -> None:
 
 
 def init_db() -> None:
+    log_startup("init_db_start")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    log_startup("data_dir_ready")
+    _migrate_legacy_data_dir()
     _migrate_legacy_db_path()
     database.connect(reuse_if_open=True)
+    log_startup("db_connected")
     database.create_tables(
         [Settings, ChatSession, AppSetting], safe=True
     )
+    log_startup("db_tables_ready")
     _ensure_settings_model_ids_column()
     _migrate_legacy_custom_providers()
+    log_startup("db_migrations_done")
     _seed_prompt_library()
+    log_startup("prompt_library_seeded")
 
 
 def ensure_db() -> None:
