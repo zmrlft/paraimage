@@ -44,12 +44,21 @@ class ProcessImageItem(PydanticBaseModel):
     image_url: str = Field(alias="imageUrl")
 
 
+class SplitPoint(PydanticBaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    x: float = 0.0
+    y: float = 0.0
+
+
 class ProcessImagesRequest(PydanticBaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
-    action: Literal["remove_bg", "split"] = "remove_bg"
+    action: Literal["remove_bg", "split", "split_lines", "split_free"] = "remove_bg"
     images: list[ProcessImageItem] = Field(default_factory=list)
     rows: int = Field(default=2, ge=1, le=8)
     cols: int = Field(default=2, ge=1, le=8)
+    split_x: list[float] = Field(default_factory=list, alias="splitX")
+    split_y: list[float] = Field(default_factory=list, alias="splitY")
+    free_path: list[SplitPoint] = Field(default_factory=list, alias="freePath")
 
 
 class SaveImageItem(PydanticBaseModel):

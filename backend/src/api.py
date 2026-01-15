@@ -200,6 +200,16 @@ class ProApi:
 
         return download_update(asset_url)
 
+    def get_update_download_progress(self) -> dict[str, Any]:
+        from services.update import get_download_progress
+
+        return get_download_progress()
+
+    def open_update_directory(self) -> dict[str, Any]:
+        from services.update import open_updates_directory
+
+        return open_updates_directory()
+
     def install_update(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
             return {"ok": False, "error": "payload must be an object"}

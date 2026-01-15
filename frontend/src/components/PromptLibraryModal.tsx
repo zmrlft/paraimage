@@ -16,6 +16,8 @@ import {
 } from "../api/promptLibrary";
 
 const { TextArea } = Input;
+const COMMUNITY_PROMPT_URL =
+  "https://raw.githubusercontent.com/zmrlft/paraimage/main/prompt-library.json";
 
 type PromptLibraryModalProps = {
   open: boolean;
@@ -39,8 +41,8 @@ const extractPromptItems = (payload: unknown): unknown[] => {
     return payload;
   }
   if (payload && typeof payload === "object") {
-    const candidate = (payload as { prompts?: unknown; items?: unknown })
-      .prompts ??
+    const candidate =
+      (payload as { prompts?: unknown; items?: unknown }).prompts ??
       (payload as { prompts?: unknown; items?: unknown }).items;
     if (Array.isArray(candidate)) {
       return candidate;
@@ -121,6 +123,7 @@ export default function PromptLibraryModal({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const promptsRef = useRef<PromptItem[]>([]);
+  const [isImportingCommunity, setIsImportingCommunity] = useState(false);
 
   useEffect(() => {
     promptsRef.current = prompts;
@@ -216,6 +219,49 @@ export default function PromptLibraryModal({
     }
   }, []);
 
+  const applyImportedPrompts = useCallback(
+    async (
+      imported: Array<{ title: string; content: string }>,
+      sourceLabel: string
+    ) => {
+      if (imported.length === 0) {
+        message.warning(`未在${sourceLabel}找到可导入的提示词`);
+        return;
+      }
+      const basePrompts = promptsRef.current;
+      const existingKeys = new Set(
+        basePrompts.map((item) =>
+          buildPromptSignature({ title: item.title, content: item.content })
+        )
+      );
+      const now = new Date().toISOString();
+      const nextItems: PromptItem[] = [];
+      for (const item of imported) {
+        const signature = buildPromptSignature(item);
+        if (existingKeys.has(signature)) {
+          continue;
+        }
+        existingKeys.add(signature);
+        nextItems.push({
+          id: createPromptId(),
+          title: item.title,
+          content: item.content,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      if (nextItems.length === 0) {
+        message.info(`${sourceLabel}的提示词已存在`);
+        return;
+      }
+      const next = [...nextItems, ...basePrompts];
+      setPrompts(next);
+      await persistPrompts(next);
+      message.success(`已从${sourceLabel}导入 ${nextItems.length} 条提示词`);
+    },
+    [persistPrompts]
+  );
+
   const handleCreate = useCallback(async () => {
     const content = draftContent.trim();
     if (!content) {
@@ -264,42 +310,33 @@ export default function PromptLibraryModal({
       }
       const raw = await file.text();
       const imported = parsePromptLibraryFile(raw);
-      if (imported.length === 0) {
-        message.warning("未在文件中找到可导入的提示词");
-        return;
-      }
-      const now = new Date().toISOString();
-      const existingKeys = new Set(
-        prompts.map((item) =>
-          buildPromptSignature({ title: item.title, content: item.content })
-        )
-      );
-      const nextItems: PromptItem[] = [];
-      for (const item of imported) {
-        const signature = buildPromptSignature(item);
-        if (existingKeys.has(signature)) {
-          continue;
-        }
-        existingKeys.add(signature);
-        nextItems.push({
-          id: createPromptId(),
-          title: item.title,
-          content: item.content,
-          createdAt: now,
-          updatedAt: now,
-        });
-      }
-      if (nextItems.length === 0) {
-        message.info("导入的提示词已存在");
-        return;
-      }
-      const next = [...nextItems, ...prompts];
-      setPrompts(next);
-      await persistPrompts(next);
-      message.success(`已导入 ${nextItems.length} 条提示词`);
+      await applyImportedPrompts(imported, "文件");
     },
-    [persistPrompts, prompts]
+    [applyImportedPrompts]
   );
+
+  const handleImportCommunity = useCallback(async () => {
+    if (isImportingCommunity) {
+      return;
+    }
+    setIsImportingCommunity(true);
+    try {
+      const response = await fetch(COMMUNITY_PROMPT_URL, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        message.error("提示词下载失败，请稍后再试");
+        return;
+      }
+      const raw = await response.text();
+      const imported = parsePromptLibraryFile(raw);
+      await applyImportedPrompts(imported, "提示词社区");
+    } catch {
+      message.error("提示词下载失败，请检查网络");
+    } finally {
+      setIsImportingCommunity(false);
+    }
+  }, [applyImportedPrompts, isImportingCommunity]);
 
   const handleUsePrompt = useCallback(
     (prompt: PromptItem) => {
@@ -585,8 +622,39 @@ export default function PromptLibraryModal({
   );
 
   const communityTab = (
-    <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 p-6 text-sm text-slate-400">
-      提示词社区正在建设中。
+    <div className="flex h-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 p-6 text-sm text-slate-500">
+      <div className="text-base font-semibold text-slate-600">
+        提示词社区正在建设中
+      </div>
+      <div className="text-xs text-slate-400">
+        可先从 GitHub 下载官方提示词，一键导入到本地。
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          type="primary"
+          icon={<Download size={16} />}
+          loading={isImportingCommunity}
+          onClick={handleImportCommunity}
+          className="rounded-2xl shadow-sm"
+        >
+          一键导入
+        </Button>
+        <Button
+          type="default"
+          href={COMMUNITY_PROMPT_URL.replace(
+            "raw.githubusercontent.com",
+            "github.com"
+          ).replace("/main/", "/blob/main/")}
+          target="_blank"
+          rel="noreferrer"
+          className="rounded-2xl border-slate-200 text-slate-600"
+        >
+          查看文件
+        </Button>
+      </div>
+      <div className="text-xs text-slate-400">
+        欢迎在GitHub上贡献你的提示词！
+      </div>
     </div>
   );
 

@@ -1,4 +1,8 @@
-export type ProcessImagesAction = "remove_bg" | "split";
+export type ProcessImagesAction =
+  | "remove_bg"
+  | "split"
+  | "split_lines"
+  | "split_free";
 
 export type ProcessImageItem = {
   id: string;
@@ -10,6 +14,9 @@ export type ProcessImagesRequest = {
   images: ProcessImageItem[];
   rows?: number;
   cols?: number;
+  splitX?: number[];
+  splitY?: number[];
+  freePath?: Array<{ x: number; y: number }>;
 };
 
 export type ProcessImageResult = {

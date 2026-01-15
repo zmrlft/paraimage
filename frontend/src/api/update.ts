@@ -29,6 +29,22 @@ export type DownloadUpdateResponse = {
   error?: string;
 };
 
+export type UpdateDownloadProgress = {
+  ok: boolean;
+  active?: boolean;
+  done?: boolean;
+  downloaded?: number;
+  total?: number | null;
+  percent?: number | null;
+  error?: string | null;
+};
+
+export type OpenUpdateDirectoryResponse = {
+  ok: boolean;
+  path?: string;
+  error?: string;
+};
+
 export type InstallUpdateResponse = {
   ok: boolean;
   error?: string;
@@ -40,6 +56,8 @@ type PyWebviewUpdateApi = {
   download_update?: (
     payload: { assetUrl: string }
   ) => Promise<DownloadUpdateResponse>;
+  get_update_download_progress?: () => Promise<UpdateDownloadProgress>;
+  open_update_directory?: () => Promise<OpenUpdateDirectoryResponse>;
   install_update?: (payload: { path: string }) => Promise<InstallUpdateResponse>;
 };
 
@@ -78,6 +96,23 @@ export const downloadUpdate = async (
   }
   return api.download_update({ assetUrl });
 };
+
+export const getUpdateDownloadProgress = async (): Promise<UpdateDownloadProgress> => {
+  const api = getPywebviewApi();
+  if (!api?.get_update_download_progress) {
+    return { ok: false, error: "pywebview not available" };
+  }
+  return api.get_update_download_progress();
+};
+
+export const openUpdateDirectory =
+  async (): Promise<OpenUpdateDirectoryResponse> => {
+    const api = getPywebviewApi();
+    if (!api?.open_update_directory) {
+      return { ok: false, error: "pywebview not available" };
+    }
+    return api.open_update_directory();
+  };
 
 export const installUpdate = async (
   path: string

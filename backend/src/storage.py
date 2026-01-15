@@ -483,6 +483,10 @@ def set_app_setting(key: str, value: str) -> AppSetting:
 def get_prompt_library() -> list[dict]:
     record = get_app_setting(PROMPT_LIBRARY_KEY)
     if not record or not record.value:
+        prompts = _load_default_prompt_library()
+        if prompts:
+            set_prompt_library(prompts)
+            return prompts
         return []
     try:
         payload = json.loads(record.value)

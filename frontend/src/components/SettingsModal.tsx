@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Input, Menu, Modal, Select } from "antd";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Button, Input, Menu, Modal, Progress, Select } from "antd";
 import type { MenuProps } from "antd";
 
 import {
@@ -11,7 +11,11 @@ import {
   checkUpdate,
   downloadUpdate,
   getAppInfo,
-  installUpdate,
+  getUpdateDownloadProgress,
+  openUpdateDirectory,
+  type DownloadUpdateResponse,
+  type OpenUpdateDirectoryResponse,
+  type UpdateDownloadProgress,
   type UpdateCheckResponse,
 } from "../api/update";
 import {
@@ -48,6 +52,25 @@ const settingsMenuItems = [
   { key: "about", label: "关于与更新" },
   { key: "experiments", label: "实验功能" },
 ] satisfies NonNullable<MenuProps["items"]>;
+
+const formatBytes = (value: number) => {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  const kb = value / 1024;
+  if (kb < 1024) {
+    return `${kb.toFixed(1)} KB`;
+  }
+  const mb = kb / 1024;
+  if (mb < 1024) {
+    return `${mb.toFixed(1)} MB`;
+  }
+  const gb = mb / 1024;
+  return `${gb.toFixed(1)} GB`;
+};
 
 const placeholderMap: Record<string, { title: string; tips: string[] }> = {
   defaults: {
@@ -99,9 +122,11 @@ export default function SettingsModal({
   );
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isDownloadingUpdate, setIsDownloadingUpdate] = useState(false);
-  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [updateActionMessage, setUpdateActionMessage] = useState("");
   const [updateActionError, setUpdateActionError] = useState("");
+  const [downloadProgress, setDownloadProgress] =
+    useState<UpdateDownloadProgress | null>(null);
+  const downloadProgressTimerRef = useRef<number | null>(null);
   const availableKeys = useMemo(
     () =>
       new Set(
@@ -318,8 +343,38 @@ export default function SettingsModal({
     setIsCheckingUpdate(false);
   }, [isCheckingUpdate]);
 
-  const handleInstallUpdate = useCallback(async () => {
-    if (isDownloadingUpdate || isInstallingUpdate) {
+  const stopDownloadProgressPolling = useCallback(() => {
+    if (downloadProgressTimerRef.current !== null) {
+      window.clearInterval(downloadProgressTimerRef.current);
+      downloadProgressTimerRef.current = null;
+    }
+  }, []);
+
+  const startDownloadProgressPolling = useCallback(() => {
+    stopDownloadProgressPolling();
+    setDownloadProgress({
+      ok: true,
+      active: true,
+      done: false,
+      downloaded: 0,
+      total: null,
+      percent: 0,
+      error: null,
+    });
+    downloadProgressTimerRef.current = window.setInterval(async () => {
+      const progress = await getUpdateDownloadProgress();
+      if (!progress.ok) {
+        return;
+      }
+      setDownloadProgress(progress);
+      if (progress.done || progress.active === false) {
+        stopDownloadProgressPolling();
+      }
+    }, 400);
+  }, [stopDownloadProgressPolling]);
+
+  const handleDownloadUpdate = useCallback(async () => {
+    if (isDownloadingUpdate) {
       return;
     }
     const assetUrl = updateInfo?.asset?.url;
@@ -329,24 +384,49 @@ export default function SettingsModal({
     setUpdateActionError("");
     setUpdateActionMessage("正在下载更新...");
     setIsDownloadingUpdate(true);
-    const downloadResponse = await downloadUpdate(assetUrl);
-    setIsDownloadingUpdate(false);
-    if (!downloadResponse.ok || !downloadResponse.path) {
+    startDownloadProgressPolling();
+    let downloadResponse: DownloadUpdateResponse | null = null;
+    try {
+      downloadResponse = await downloadUpdate(assetUrl);
+    } finally {
+      setIsDownloadingUpdate(false);
+      stopDownloadProgressPolling();
+    }
+    if (!downloadResponse || !downloadResponse.ok || !downloadResponse.path) {
       setUpdateActionMessage("");
-      setUpdateActionError(downloadResponse.error || "下载失败");
+      setUpdateActionError(downloadResponse?.error || "下载失败");
       return;
     }
-    setUpdateActionMessage("下载完成，正在安装...");
-    setIsInstallingUpdate(true);
-    const installResponse = await installUpdate(downloadResponse.path);
-    setIsInstallingUpdate(false);
-    if (!installResponse.ok) {
-      setUpdateActionMessage("");
-      setUpdateActionError(installResponse.error || "安装失败");
+    setUpdateActionMessage("下载完成，正在打开更新目录...");
+    const openResponse: OpenUpdateDirectoryResponse =
+      await openUpdateDirectory();
+    if (!openResponse.ok) {
+      const fallbackPath = openResponse.path || downloadResponse.path;
+      setUpdateActionMessage(
+        fallbackPath
+          ? `下载完成，请手动打开目录：${fallbackPath}`
+          : "下载完成，请手动打开更新目录"
+      );
+      setUpdateActionError(openResponse.error || "打开更新目录失败");
       return;
     }
-    setUpdateActionMessage("正在安装，应用即将关闭...");
-  }, [isDownloadingUpdate, isInstallingUpdate, updateInfo]);
+    setUpdateActionMessage(
+      openResponse.path
+        ? `下载完成，已打开更新目录：${openResponse.path}`
+        : "下载完成，已打开更新目录"
+    );
+  }, [
+    isDownloadingUpdate,
+    startDownloadProgressPolling,
+    stopDownloadProgressPolling,
+    updateInfo,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      stopDownloadProgressPolling();
+    };
+  }, [stopDownloadProgressPolling]);
 
   const handleAutoSaveClose = useCallback(() => {
     if (isSaving || isSavingData) {
@@ -657,7 +737,6 @@ export default function SettingsModal({
         ? updateInfo.latestVersion
         : "";
     const assetUrl = updateInfo?.asset?.url || "";
-    const assetInstallable = updateInfo?.asset?.installable !== false;
     const releaseUrl =
       updateInfo?.ok && updateInfo.releaseUrl
         ? updateInfo.releaseUrl
@@ -665,7 +744,17 @@ export default function SettingsModal({
     const notes = updateInfo?.ok ? updateInfo.notes?.trim() || "" : "";
     const notesPreview =
       notes.length > 600 ? `${notes.slice(0, 600)}...` : notes;
-    const actionPending = isDownloadingUpdate || isInstallingUpdate;
+    const actionPending = isDownloadingUpdate;
+    const downloadPercent =
+      typeof downloadProgress?.percent === "number"
+        ? Math.min(100, Math.max(0, downloadProgress.percent))
+        : null;
+    const downloadSizeText = downloadProgress?.downloaded
+      ? `${formatBytes(downloadProgress.downloaded)}${
+          downloadProgress.total ? ` / ${formatBytes(downloadProgress.total)}` : ""
+        }`
+      : "";
+    const assetUnavailable = updateAvailable && !assetUrl;
 
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -713,6 +802,21 @@ export default function SettingsModal({
           </div>
         )}
 
+        {isDownloadingUpdate && (
+          <div className="mt-3">
+            <Progress
+              percent={downloadPercent ?? 0}
+              status="active"
+              showInfo={downloadPercent !== null}
+            />
+            {downloadSizeText && (
+              <div className="mt-1 text-[11px] text-slate-400">
+                {downloadSizeText}
+              </div>
+            )}
+          </div>
+        )}
+
         {updateInfo?.ok && (
           <div className="mt-4 space-y-2 text-xs text-slate-500">
             <div>
@@ -721,6 +825,11 @@ export default function SettingsModal({
             </div>
             {updateInfo.asset?.name && (
               <div>安装包：{updateInfo.asset.name}</div>
+            )}
+            {assetUnavailable && (
+              <div className="text-amber-600">
+                当前系统暂无适配安装包，请在 Release 页面下载。
+              </div>
             )}
             {notesPreview && (
               <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-slate-600">
@@ -734,27 +843,15 @@ export default function SettingsModal({
             )}
             {updateAvailable && assetUrl && (
               <div className="flex flex-wrap items-center gap-2">
-                {assetInstallable ? (
-                  <Button
-                    type="default"
-                    onClick={handleInstallUpdate}
-                    loading={actionPending}
-                    disabled={actionPending}
-                    className="rounded-xl"
-                  >
-                    下载并安装
-                  </Button>
-                ) : (
-                  <Button
-                    type="default"
-                    href={assetUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-xl"
-                  >
-                    下载更新
-                  </Button>
-                )}
+                <Button
+                  type="default"
+                  onClick={handleDownloadUpdate}
+                  loading={actionPending}
+                  disabled={actionPending}
+                  className="rounded-xl"
+                >
+                  下载更新
+                </Button>
               </div>
             )}
           </div>
@@ -764,10 +861,10 @@ export default function SettingsModal({
   }, [
     appInfo,
     handleCheckUpdate,
-    handleInstallUpdate,
+    handleDownloadUpdate,
     isCheckingUpdate,
     isDownloadingUpdate,
-    isInstallingUpdate,
+    downloadProgress,
     updateActionError,
     updateActionMessage,
     updateInfo,

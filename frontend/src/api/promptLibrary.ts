@@ -36,7 +36,8 @@ const getPywebviewApi = (): PyWebviewPromptApi | null => {
 };
 
 const waitForPywebviewApi = (
-  timeoutMs = 1500
+  timeoutMs = 6000,
+  pollIntervalMs = 120
 ): Promise<PyWebviewPromptApi | null> => {
   if (typeof window === "undefined") {
     return Promise.resolve(null);
@@ -47,24 +48,46 @@ const waitForPywebviewApi = (
   }
   return new Promise((resolve) => {
     let settled = false;
-    const handleReady = () => {
+    let timer: number | null = null;
+    let handleReady: () => void = () => {};
+    const cleanup = () => {
       if (settled) {
         return;
       }
       settled = true;
-      window.clearTimeout(timer);
       window.removeEventListener("pywebviewready", handleReady);
-      resolve(getPywebviewApi());
+      if (timer) {
+        window.clearTimeout(timer);
+      }
     };
-    const timer = window.setTimeout(() => {
+    const finish = (nextApi: PyWebviewPromptApi | null) => {
+      cleanup();
+      resolve(nextApi);
+    };
+    handleReady = () => {
+      const nextApi = getPywebviewApi();
+      if (nextApi) {
+        finish(nextApi);
+      }
+    };
+    const startedAt = Date.now();
+    const poll = () => {
       if (settled) {
         return;
       }
-      settled = true;
-      window.removeEventListener("pywebviewready", handleReady);
-      resolve(getPywebviewApi());
-    }, timeoutMs);
+      const nextApi = getPywebviewApi();
+      if (nextApi) {
+        finish(nextApi);
+        return;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        finish(null);
+        return;
+      }
+      timer = window.setTimeout(poll, pollIntervalMs);
+    };
     window.addEventListener("pywebviewready", handleReady);
+    poll();
   });
 };
 

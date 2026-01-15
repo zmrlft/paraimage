@@ -8,7 +8,7 @@ export type ImageManagerItem = {
   windowId?: number;
   messageId?: string;
   createdAt?: string;
-  action?: "remove_bg" | "split";
+  action?: "remove_bg" | "split" | "split_lines" | "split_free";
   parentId?: string;
   index?: number;
 };

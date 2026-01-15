@@ -1,6 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { Button, InputNumber, Modal, Tooltip } from "antd";
-import { Check, Crop, Download, Eraser, Images, X } from "lucide-react";
+import {
+  Check,
+  Crop,
+  Download,
+  Eraser,
+  Images,
+  RotateCcw,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 
 import { processImages, type ProcessImagesAction } from "../api/imageProcessing";
 import { saveImages } from "../api/imageSaving";
@@ -18,14 +35,24 @@ type ImageManagerModalProps = {
 
 const actionCopy: Record<ProcessImagesAction, string> = {
   remove_bg: "抠图",
-  split: "切割",
+  split: "网格切割",
+  split_lines: "直线切割",
+  split_free: "自由切割",
 };
+
+type SplitMode = "grid" | "line" | "free";
+type LineOrientation = "auto" | "horizontal" | "vertical";
+type LineGuide = { orientation: "horizontal" | "vertical"; position: number };
+type SplitPoint = { x: number; y: number };
+
+const clampUnit = (value: number) => Math.min(1, Math.max(0, value));
+const normalizeGuide = (value: number) => Math.min(0.98, Math.max(0.02, value));
 
 const buildProcessedLabel = (item: ImageManagerItem) => {
   if (!item.action) {
     return "处理结果";
   }
-  if (item.action === "split" && typeof item.index === "number") {
+  if (item.action.startsWith("split") && typeof item.index === "number") {
     return `${actionCopy[item.action]} ${item.index + 1}`;
   }
   return actionCopy[item.action];
@@ -44,10 +71,22 @@ export default function ImageManagerModal({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [splitMode, setSplitMode] = useState(false);
+  const [splitMode, setSplitMode] = useState<SplitMode | null>(null);
   const [splitRows, setSplitRows] = useState(2);
   const [splitCols, setSplitCols] = useState(2);
+  const [lineMode, setLineMode] = useState<LineOrientation>("auto");
+  const [lineGuides, setLineGuides] = useState<{ x: number[]; y: number[] }>({
+    x: [],
+    y: [],
+  });
+  const [lineHistory, setLineHistory] = useState<LineGuide[]>([]);
+  const [draftLine, setDraftLine] = useState<LineGuide | null>(null);
+  const [freePath, setFreePath] = useState<SplitPoint[]>([]);
+  const [previewZoom, setPreviewZoom] = useState(1);
   const wasOpenRef = useRef(false);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const lineStartRef = useRef<SplitPoint | null>(null);
+  const isDrawingFreeRef = useRef(false);
   const [previewState, setPreviewState] = useState<{
     open: boolean;
     imageUrl: string;
@@ -71,7 +110,13 @@ export default function ImageManagerModal({
     setActiveId(nextActive);
     setSelectedIds(nextActive ? new Set([nextActive]) : new Set());
     setActionError(null);
-    setSplitMode(false);
+    setSplitMode(null);
+    setLineMode("auto");
+    setLineGuides({ x: [], y: [] });
+    setLineHistory([]);
+    setDraftLine(null);
+    setFreePath([]);
+    setPreviewZoom(1);
   }, [images, initialActiveId, open]);
 
   useEffect(() => {
@@ -105,9 +150,16 @@ export default function ImageManagerModal({
 
   useEffect(() => {
     if (splitMode && selectedIds.size === 0) {
-      setSplitMode(false);
+      setSplitMode(null);
+      setDraftLine(null);
     }
   }, [selectedIds, splitMode]);
+
+  useEffect(() => {
+    lineStartRef.current = null;
+    isDrawingFreeRef.current = false;
+    setDraftLine(null);
+  }, [splitMode]);
 
   const sourceItems = useMemo(
     () => items.filter((item) => item.origin === "source"),
@@ -124,6 +176,164 @@ export default function ImageManagerModal({
   );
 
   const selectedCount = selectedIds.size;
+  const lineCount = lineGuides.x.length + lineGuides.y.length;
+  const zoomLabel = `${Math.round(previewZoom * 100)}%`;
+  const clampZoom = useCallback(
+    (value: number) => Math.min(3, Math.max(1, value)),
+    []
+  );
+  const handleZoom = useCallback(
+    (delta: number) => {
+      setPreviewZoom((prev) => clampZoom(prev + delta));
+    },
+    [clampZoom]
+  );
+  const handleResetZoom = useCallback(() => {
+    setPreviewZoom(1);
+  }, []);
+
+  const addLineGuide = useCallback((guide: LineGuide) => {
+    const position = normalizeGuide(guide.position);
+    setLineGuides((prev) => {
+      const target = guide.orientation === "vertical" ? "x" : "y";
+      const nextValues = prev[target].slice();
+      if (nextValues.some((value) => Math.abs(value - position) < 0.01)) {
+        return prev;
+      }
+      nextValues.push(position);
+      nextValues.sort((a, b) => a - b);
+      setLineHistory((history) => [...history, { ...guide, position }]);
+      return target === "x"
+        ? { ...prev, x: nextValues }
+        : { ...prev, y: nextValues };
+    });
+  }, []);
+
+  const handleUndoLine = useCallback(() => {
+    setLineHistory((prev) => {
+      if (prev.length === 0) {
+        return prev;
+      }
+      const next = prev.slice(0, -1);
+      const last = prev[prev.length - 1];
+      setLineGuides((current) => {
+        const target = last.orientation === "vertical" ? "x" : "y";
+        const filtered = current[target].filter(
+          (value) => Math.abs(value - last.position) >= 0.001
+        );
+        return target === "x"
+          ? { ...current, x: filtered }
+          : { ...current, y: filtered };
+      });
+      return next;
+    });
+  }, []);
+
+  const handleClearLines = useCallback(() => {
+    setLineGuides({ x: [], y: [] });
+    setLineHistory([]);
+    setDraftLine(null);
+  }, []);
+
+  const handleClearFreePath = useCallback(() => {
+    setFreePath([]);
+  }, []);
+
+  const getRelativePoint = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const rect = overlayRef.current?.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const x = clampUnit((event.clientX - rect.left) / rect.width);
+      const y = clampUnit((event.clientY - rect.top) / rect.height);
+      return { x, y };
+    },
+    []
+  );
+
+  const resolveLineGuide = useCallback(
+    (start: SplitPoint, end: SplitPoint) => {
+      let orientation: LineGuide["orientation"] = "horizontal";
+      if (lineMode === "vertical") {
+        orientation = "vertical";
+      } else if (lineMode === "horizontal") {
+        orientation = "horizontal";
+      } else {
+        const dx = Math.abs(end.x - start.x);
+        const dy = Math.abs(end.y - start.y);
+        orientation = dx >= dy ? "horizontal" : "vertical";
+      }
+      const position = orientation === "vertical" ? end.x : end.y;
+      return { orientation, position };
+    },
+    [lineMode]
+  );
+
+  const handleOverlayPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+      const point = getRelativePoint(event);
+      if (!point || !splitMode) {
+        return;
+      }
+      if (splitMode === "line") {
+        lineStartRef.current = point;
+        setDraftLine(
+          resolveLineGuide(point, {
+            x: point.x + 0.001,
+            y: point.y + 0.001,
+          })
+        );
+      } else if (splitMode === "free") {
+        isDrawingFreeRef.current = true;
+        setFreePath([point]);
+      }
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [getRelativePoint, resolveLineGuide, splitMode]
+  );
+
+  const handleOverlayPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const point = getRelativePoint(event);
+      if (!point || !splitMode) {
+        return;
+      }
+      if (splitMode === "line" && lineStartRef.current) {
+        setDraftLine(resolveLineGuide(lineStartRef.current, point));
+      } else if (splitMode === "free" && isDrawingFreeRef.current) {
+        setFreePath((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && Math.hypot(point.x - last.x, point.y - last.y) < 0.004) {
+            return prev;
+          }
+          return [...prev, point];
+        });
+      }
+    },
+    [getRelativePoint, resolveLineGuide, splitMode]
+  );
+
+  const handleOverlayPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const point = getRelativePoint(event);
+      if (!point || !splitMode) {
+        return;
+      }
+      if (splitMode === "line" && lineStartRef.current) {
+        const guide = resolveLineGuide(lineStartRef.current, point);
+        addLineGuide(guide);
+        lineStartRef.current = null;
+        setDraftLine(null);
+      } else if (splitMode === "free" && isDrawingFreeRef.current) {
+        isDrawingFreeRef.current = false;
+      }
+    },
+    [addLineGuide, getRelativePoint, resolveLineGuide, splitMode]
+  );
 
   const toggleSelection = useCallback((id: string) => {
     setActiveId(id);
@@ -165,7 +375,13 @@ export default function ImageManagerModal({
   const handleProcess = useCallback(
     async (
       action: ProcessImagesAction,
-      options?: { rows?: number; cols?: number }
+      options?: {
+        rows?: number;
+        cols?: number;
+        splitX?: number[];
+        splitY?: number[];
+        freePath?: SplitPoint[];
+      }
     ) => {
       if (isProcessing || selectedIds.size === 0) {
         return;
@@ -185,6 +401,9 @@ export default function ImageManagerModal({
           })),
           rows: options?.rows,
           cols: options?.cols,
+          splitX: options?.splitX,
+          splitY: options?.splitY,
+          freePath: options?.freePath,
         });
 
         if (!response.ok) {
@@ -242,19 +461,59 @@ export default function ImageManagerModal({
     if (selectedIds.size === 0) {
       return;
     }
-    setSplitMode(true);
+    setSplitMode("grid");
     setActionError(null);
   }, [selectedIds]);
 
   const handleConfirmSplit = useCallback(async () => {
-    const rows = Math.max(1, splitRows);
-    const cols = Math.max(1, splitCols);
-    await handleProcess("split", { rows, cols });
-    setSplitMode(false);
-  }, [handleProcess, splitCols, splitRows]);
+    if (!splitMode) {
+      return;
+    }
+    if (splitMode === "grid") {
+      const rows = Math.max(1, splitRows);
+      const cols = Math.max(1, splitCols);
+      await handleProcess("split", { rows, cols });
+      setSplitMode(null);
+      return;
+    }
+    if (splitMode === "line") {
+      if (lineCount === 0) {
+        setActionError("请先在预览图中绘制至少一条切割线");
+        return;
+      }
+      await handleProcess("split_lines", {
+        splitX: lineGuides.x,
+        splitY: lineGuides.y,
+      });
+      setSplitMode(null);
+      return;
+    }
+    if (freePath.length < 3) {
+      setActionError("请在预览图中拖拽绘制闭合区域");
+      return;
+    }
+    const first = freePath[0];
+    const last = freePath[freePath.length - 1];
+    const distance = Math.hypot(first.x - last.x, first.y - last.y);
+    const closedPath =
+      distance > 0.02 ? [...freePath, first] : [...freePath];
+    await handleProcess("split_free", { freePath: closedPath });
+    setSplitMode(null);
+  }, [
+    freePath,
+    handleProcess,
+    lineCount,
+    lineGuides.x,
+    lineGuides.y,
+    splitCols,
+    splitMode,
+    splitRows,
+  ]);
 
   const handleCancelSplit = useCallback(() => {
-    setSplitMode(false);
+    setSplitMode(null);
+    setDraftLine(null);
+    setActionError(null);
   }, []);
 
   const downloadFallback = useCallback(
@@ -312,16 +571,31 @@ export default function ImageManagerModal({
   }, [downloadFallback, isSaving, items, selectedIds]);
 
   const splitPreviewStyle = useMemo(() => {
-    if (!splitMode) {
+    if (splitMode !== "grid") {
       return {};
     }
     const rows = Math.max(1, splitRows);
     const cols = Math.max(1, splitCols);
-    const line = "rgba(56, 189, 248, 0.75)";
+    const line = "rgba(14, 165, 233, 0.9)";
     return {
-      backgroundImage: `repeating-linear-gradient(to right, ${line} 0, ${line} 1px, transparent 1px, transparent calc(100% / ${cols})), repeating-linear-gradient(to bottom, ${line} 0, ${line} 1px, transparent 1px, transparent calc(100% / ${rows}))`,
+      backgroundImage: `repeating-linear-gradient(to right, ${line} 0, ${line} 2px, transparent 2px, transparent calc(100% / ${cols})), repeating-linear-gradient(to bottom, ${line} 0, ${line} 2px, transparent 2px, transparent calc(100% / ${rows}))`,
     } as const;
   }, [splitCols, splitMode, splitRows]);
+
+  const freePathD = useMemo(() => {
+    if (freePath.length === 0) {
+      return "";
+    }
+    const [first, ...rest] = freePath;
+    const commands = [`M ${first.x} ${first.y}`];
+    rest.forEach((point) => {
+      commands.push(`L ${point.x} ${point.y}`);
+    });
+    if (freePath.length > 2) {
+      commands.push("Z");
+    }
+    return commands.join(" ");
+  }, [freePath]);
 
   const renderItem = useCallback(
     (item: ImageManagerItem) => {
@@ -422,7 +696,8 @@ export default function ImageManagerModal({
                 loading={isProcessing}
                 disabled={selectedIds.size === 0}
                 onClick={() => {
-                  setSplitMode(false);
+                  setSplitMode(null);
+                  setDraftLine(null);
                   handleProcess("remove_bg");
                 }}
                 className="rounded-2xl shadow-sm"
@@ -453,39 +728,153 @@ export default function ImageManagerModal({
             </div>
           </div>
 
+          <div className="mt-2 rounded-2xl border border-amber-100 bg-amber-50/70 px-3 py-2 text-xs text-amber-700">
+            提示：首次抠图会自动下载离线模型 U2Net（约 176MB），首次处理
+            会慢一些，请耐心等待。
+          </div>
+
           {splitMode && (
             <div className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-sky-100 bg-sky-50/70 p-3 text-xs text-slate-600">
               <div className="text-sm font-semibold text-slate-700">
                 切割设置
               </div>
-              <div className="flex items-center gap-2">
-                <span>行</span>
-                <InputNumber
-                  min={1}
-                  max={8}
-                  step={1}
-                  precision={0}
-                  value={splitRows}
-                  onChange={(value) =>
-                    setSplitRows(typeof value === "number" ? value : 1)
-                  }
-                  className="w-20 rounded-xl border-slate-200"
-                />
+              <div className="flex items-center gap-1 rounded-full border border-white/80 bg-white/80 p-1">
+                <Button
+                  size="small"
+                  type={splitMode === "grid" ? "primary" : "text"}
+                  onClick={() => {
+                    setSplitMode("grid");
+                    setActionError(null);
+                  }}
+                  className="rounded-full"
+                >
+                  网格
+                </Button>
+                <Button
+                  size="small"
+                  type={splitMode === "line" ? "primary" : "text"}
+                  onClick={() => {
+                    setSplitMode("line");
+                    setActionError(null);
+                  }}
+                  className="rounded-full"
+                >
+                  直线
+                </Button>
+                <Button
+                  size="small"
+                  type={splitMode === "free" ? "primary" : "text"}
+                  onClick={() => {
+                    setSplitMode("free");
+                    setActionError(null);
+                  }}
+                  className="rounded-full"
+                >
+                  自由
+                </Button>
               </div>
-              <div className="flex items-center gap-2">
-                <span>列</span>
-                <InputNumber
-                  min={1}
-                  max={8}
-                  step={1}
-                  precision={0}
-                  value={splitCols}
-                  onChange={(value) =>
-                    setSplitCols(typeof value === "number" ? value : 1)
-                  }
-                  className="w-20 rounded-xl border-slate-200"
-                />
-              </div>
+
+              {splitMode === "grid" && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span>行</span>
+                    <InputNumber
+                      min={1}
+                      max={8}
+                      step={1}
+                      precision={0}
+                      value={splitRows}
+                      onChange={(value) =>
+                        setSplitRows(typeof value === "number" ? value : 1)
+                      }
+                      className="w-20 rounded-xl border-slate-200"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span>列</span>
+                    <InputNumber
+                      min={1}
+                      max={8}
+                      step={1}
+                      precision={0}
+                      value={splitCols}
+                      onChange={(value) =>
+                        setSplitCols(typeof value === "number" ? value : 1)
+                      }
+                      className="w-20 rounded-xl border-slate-200"
+                    />
+                  </div>
+                </>
+              )}
+
+              {splitMode === "line" && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span>线条</span>
+                    <span className="font-semibold text-slate-700">
+                      {lineCount}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1 py-0.5">
+                    <Button
+                      size="small"
+                      type={lineMode === "auto" ? "primary" : "text"}
+                      onClick={() => setLineMode("auto")}
+                      className="rounded-full"
+                    >
+                      自动
+                    </Button>
+                    <Button
+                      size="small"
+                      type={lineMode === "horizontal" ? "primary" : "text"}
+                      onClick={() => setLineMode("horizontal")}
+                      className="rounded-full"
+                    >
+                      横向
+                    </Button>
+                    <Button
+                      size="small"
+                      type={lineMode === "vertical" ? "primary" : "text"}
+                      onClick={() => setLineMode("vertical")}
+                      className="rounded-full"
+                    >
+                      纵向
+                    </Button>
+                  </div>
+                  <Button
+                    size="small"
+                    onClick={handleUndoLine}
+                    disabled={lineHistory.length === 0}
+                    className="rounded-full border-slate-200"
+                  >
+                    撤销上条
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={handleClearLines}
+                    disabled={lineCount === 0}
+                    className="rounded-full border-slate-200"
+                  >
+                    清空线条
+                  </Button>
+                </>
+              )}
+
+              {splitMode === "free" && (
+                <>
+                  <Button
+                    size="small"
+                    onClick={handleClearFreePath}
+                    className="rounded-full border-slate-200"
+                  >
+                    重新绘制
+                  </Button>
+                  <span className="text-slate-400">
+                    拖拽绘制闭合区域，松开完成路径
+                  </span>
+                </>
+              )}
+
               <Button
                 type="primary"
                 loading={isProcessing}
@@ -500,8 +889,12 @@ export default function ImageManagerModal({
               >
                 取消
               </Button>
-              <div className="text-slate-400">
-                预览线条会显示在右侧预览图
+              <div className="w-full text-slate-400">
+                {splitMode === "grid"
+                  ? "网格线条会显示在右侧预览图"
+                  : splitMode === "line"
+                    ? "在预览图拖拽画线，自动切为多个区域"
+                    : "在预览图自由勾勒，生成选区切割结果"}
               </div>
             </div>
           )}
@@ -546,22 +939,142 @@ export default function ImageManagerModal({
         </section>
 
         <aside className="flex w-80 shrink-0 flex-col gap-3 rounded-3xl border border-slate-100 bg-white/80 p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-            预览
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+              预览
+            </div>
+            {splitMode && (
+              <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white/90 px-1 py-0.5 text-[11px] text-slate-500 shadow-sm">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ZoomOut size={12} />}
+                  disabled={previewZoom <= 1}
+                  onClick={() => handleZoom(-0.25)}
+                  className="h-6 w-6 rounded-full p-0"
+                />
+                <span className="min-w-[42px] text-center">{zoomLabel}</span>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ZoomIn size={12} />}
+                  disabled={previewZoom >= 3}
+                  onClick={() => handleZoom(0.25)}
+                  className="h-6 w-6 rounded-full p-0"
+                />
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<RotateCcw size={12} />}
+                  disabled={previewZoom === 1}
+                  onClick={handleResetZoom}
+                  className="h-6 w-6 rounded-full p-0 text-slate-500"
+                />
+              </div>
+            )}
           </div>
           {activeItem ? (
-            <div className="relative">
-              <img
-                src={activeItem.imageUrl}
-                alt="preview"
-                className="w-full rounded-2xl border border-slate-100 object-cover shadow-sm"
-              />
-              {splitMode && (
+            <div className="relative w-full rounded-2xl border border-slate-100 bg-white/80 shadow-sm">
+              <div className="max-h-[420px] overflow-auto rounded-2xl">
                 <div
-                  className="pointer-events-none absolute inset-0 rounded-2xl border border-sky-300/70"
-                  style={splitPreviewStyle}
-                />
-              )}
+                  className="relative"
+                  style={{ width: `${(splitMode ? previewZoom : 1) * 100}%` }}
+                >
+                  <img
+                    src={activeItem.imageUrl}
+                    alt="preview"
+                    className="block w-full rounded-2xl object-contain"
+                  />
+                  {splitMode === "grid" && (
+                    <div
+                      className="pointer-events-none absolute inset-0 rounded-2xl border border-sky-300/70"
+                      style={splitPreviewStyle}
+                    />
+                  )}
+                  {(splitMode === "line" || splitMode === "free") && (
+                    <div
+                      ref={overlayRef}
+                      onPointerDown={handleOverlayPointerDown}
+                      onPointerMove={handleOverlayPointerMove}
+                      onPointerUp={handleOverlayPointerUp}
+                      onPointerLeave={handleOverlayPointerUp}
+                      className="absolute inset-0 rounded-2xl border border-sky-300/80 cursor-crosshair"
+                    >
+                      <svg
+                        viewBox="0 0 1 1"
+                        preserveAspectRatio="none"
+                        className="absolute inset-0 h-full w-full"
+                      >
+                        {splitMode === "line" &&
+                          lineGuides.x.map((value) => (
+                            <line
+                              key={`x-${value}`}
+                              x1={value}
+                              x2={value}
+                              y1={0}
+                              y2={1}
+                              stroke="rgba(14, 165, 233, 0.95)"
+                              strokeWidth={2}
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          ))}
+                        {splitMode === "line" &&
+                          lineGuides.y.map((value) => (
+                            <line
+                              key={`y-${value}`}
+                              x1={0}
+                              x2={1}
+                              y1={value}
+                              y2={value}
+                              stroke="rgba(14, 165, 233, 0.95)"
+                              strokeWidth={2}
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          ))}
+                        {splitMode === "line" && draftLine && (
+                          <line
+                            x1={
+                              draftLine.orientation === "vertical"
+                                ? draftLine.position
+                                : 0
+                            }
+                            x2={
+                              draftLine.orientation === "vertical"
+                                ? draftLine.position
+                                : 1
+                            }
+                            y1={
+                              draftLine.orientation === "horizontal"
+                                ? draftLine.position
+                                : 0
+                            }
+                            y2={
+                              draftLine.orientation === "horizontal"
+                                ? draftLine.position
+                                : 1
+                            }
+                            stroke="rgba(14, 165, 233, 0.65)"
+                            strokeDasharray="0.02 0.02"
+                            strokeWidth={2}
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        )}
+                        {splitMode === "free" && freePathD && (
+                          <path
+                            d={freePathD}
+                            fill="none"
+                            stroke="rgba(14, 165, 233, 0.95)"
+                            strokeWidth={2}
+                            strokeLinejoin="round"
+                            strokeLinecap="round"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        )}
+                      </svg>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           ) : (
             <div className="flex h-56 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400">
